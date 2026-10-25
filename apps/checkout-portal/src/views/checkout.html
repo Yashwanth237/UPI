@@ -1656,13 +1656,15 @@
       // PC Trust Badge Whitelabel
       const pcTrust = document.getElementById('pcTrustBadge');
       const pcTrustText = document.getElementById('pcTrustBadgeText');
+      // Shown only when the merchant configured its own wording: the platform never asserts
+      // trust or verification status it has not established.
       if (pcTrust) {
-        if (b.hideTrustBadge) {
+        if (b.hideTrustBadge || !b.trustBadgeText) {
           pcTrust.style.display = 'none';
         } else {
           pcTrust.style.display = 'inline-flex';
           if (pcTrustText) {
-            pcTrustText.textContent = b.trustBadgeText || `${appName} Trusted Business`;
+            pcTrustText.textContent = b.trustBadgeText;
           }
         }
       }
@@ -1670,13 +1672,15 @@
       // PC Social Proof / Subbanner Whitelabel
       const pcSocialWrap = document.getElementById('pcSocialProofWrap');
       const pcSocialProof = document.getElementById('pcSocialProofText');
+      // No fabricated social proof: only merchant-supplied notice text is ever shown.
+      const merchantNotice = b.subbannerText || b.sidebarNotice || '';
       if (pcSocialWrap) {
-        if (b.hideSubbanner) {
+        if (b.hideSubbanner || !merchantNotice) {
           pcSocialWrap.style.display = 'none';
         } else {
           pcSocialWrap.style.display = 'flex';
           if (pcSocialProof) {
-            pcSocialProof.textContent = b.subbannerText || b.sidebarNotice || `500+ orders last month from ${data.merchantName || 'Merchant'}`;
+            pcSocialProof.textContent = merchantNotice;
           }
         }
       }
