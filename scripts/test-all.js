@@ -21,6 +21,7 @@ const testFiles = [
   'apps/coin-wallet-store/src/__tests__/coin-wallet-store.test.js',
   'apps/merchant-admin/src/__tests__/merchant-admin.test.js',
   'apps/payment-help/src/__tests__/payment-help.test.js',
+  'apps/merchant-admin/src/__tests__/console-shell.test.js',
   'apps/gmail-observer/src/__tests__/gmail-observer.test.js',
   'apps/sms-observer/src/__tests__/sms-observer.test.js',
   'apps/android-observer-app/__tests__/android-observer.test.js',

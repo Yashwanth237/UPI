@@ -4,6 +4,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { getDatabase, MerchantRepository, SupportTicketRepository } from '@youpi/db';
 import { getAdminToken, safeEqual } from '@youpi/common';
+import { serveUiAsset } from '@youpi/ui';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -14,6 +15,22 @@ const BASE_SECURITY_HEADERS = Object.freeze({
   'X-Frame-Options': 'SAMEORIGIN',
   'Referrer-Policy': 'strict-origin-when-cross-origin',
   'Content-Security-Policy': "default-src 'self'; img-src 'self' data: https:; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'; frame-ancestors 'self'; base-uri 'none'; form-action 'self'; object-src 'none'"
+});
+
+/** The console ships no inline script or style, so its policy can drop 'unsafe-inline'. */
+const CONSOLE_SECURITY_HEADERS = Object.freeze({
+  'X-Content-Type-Options': 'nosniff',
+  'X-Frame-Options': 'DENY',
+  'Referrer-Policy': 'same-origin',
+  'Permissions-Policy': 'camera=(), microphone=(), geolocation=(), payment=()',
+  'Content-Security-Policy': "default-src 'self'; img-src 'self' data:; style-src 'self'; script-src 'self'; font-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'; object-src 'none'"
+});
+
+/** Console static files (fixed allow-list). */
+const CONSOLE_ASSETS = Object.freeze({
+  '/console/console.js': { file: 'console.js', type: 'text/javascript; charset=utf-8' },
+  '/console/console.css': { file: 'console.css', type: 'text/css; charset=utf-8' },
+  '/console/theme.js': { file: 'theme.js', type: 'text/javascript; charset=utf-8' }
 });
 
 /** True when the caller presented the admin bearer token in constant time (or ?token= on GET SSE). */
@@ -175,7 +192,9 @@ export class AdminServer {
             ...sanitizedForwardHeaders(req, `localhost:${targetPort}`),
             'x-merchant-id': req.headers['x-merchant-id'] || defaultMerchantId,
             'x-forwarded-host': req.headers.host || '',
-            'x-forwarded-proto': req.headers['x-forwarded-proto'] || 'http'
+            'x-forwarded-proto': req.headers['x-forwarded-proto'] || 'http',
+            // The API trusts this only from loopback (this relay); used for audit and rate limits.
+            'x-forwarded-for': req.socket?.remoteAddress || ''
           }
         }, (proxyRes) => {
           res.writeHead(proxyRes.statusCode, proxyRes.headers);
@@ -219,6 +238,30 @@ export class AdminServer {
           stream.pipe(res);
           return;
         }
+      }
+
+      // Shared design system (tokens, components, fonts)
+      if (serveUiAsset(pathname, req, res)) return;
+
+      // Operations console: static shell + assets. Strict CSP: no inline script or style.
+      if (pathname === '/console' || pathname === '/console/') {
+        res.writeHead(200, {
+          'Content-Type': 'text/html; charset=utf-8',
+          'Cache-Control': 'no-cache',
+          ...CONSOLE_SECURITY_HEADERS
+        });
+        res.end(fs.readFileSync(path.join(__dirname, 'views', 'console.html')));
+        return;
+      }
+      const consoleAsset = CONSOLE_ASSETS[pathname];
+      if (consoleAsset && req.method === 'GET') {
+        res.writeHead(200, {
+          'Content-Type': consoleAsset.type,
+          'Cache-Control': 'no-cache',
+          'X-Content-Type-Options': 'nosniff'
+        });
+        fs.createReadStream(path.resolve(__dirname, '../public/console', consoleAsset.file)).pipe(res);
+        return;
       }
 
       // Self-hosted UI fonts (CSP blocks third-party font CDNs)

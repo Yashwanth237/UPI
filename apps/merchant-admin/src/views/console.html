@@ -1,0 +1,102 @@
+<!doctype html>
+<html lang="en-IN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <meta name="robots" content="noindex, nofollow">
+  <title>YouPI Console</title>
+  <link rel="preload" href="/ui/fonts/dm-sans.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="stylesheet" href="/ui/tokens.css">
+  <link rel="stylesheet" href="/ui/components.css">
+  <link rel="stylesheet" href="/console/console.css">
+  <script src="/console/theme.js"></script>
+</head>
+<body class="ui">
+  <a class="ui-skip-link" href="#main">Skip to content</a>
+
+  <!-- Boot state: replaced by sign-in or the app shell once the session is known. -->
+  <div id="boot" class="c-boot" role="status" aria-live="polite">
+    <span class="c-brandmark" aria-hidden="true">Y</span>
+    <span>Loading console…</span>
+  </div>
+
+  <!-- Sign-in -->
+  <main id="signin" class="c-signin" hidden>
+    <div class="c-signin__panel">
+      <div class="c-signin__brand">
+        <span class="c-brandmark" aria-hidden="true">Y</span>
+        <span class="c-brandname">YouPI <span>Console</span></span>
+      </div>
+      <h1>Sign in</h1>
+      <p class="ui-muted">For merchant staff, cashiers, support and administrators.</p>
+      <div id="signinSetup" class="ui-alert ui-alert--warning" hidden>
+        <div>
+          <strong>No staff accounts exist yet.</strong>
+          <p>On the server, create the first administrator:</p>
+          <code class="c-code">npm run staff:create -- --email you@company.in --name "Your Name"</code>
+        </div>
+      </div>
+      <div id="signinError" class="ui-alert ui-alert--danger" role="alert" hidden></div>
+      <form id="signinForm" class="ui-stack" novalidate>
+        <div class="ui-field">
+          <label class="ui-label" for="signinEmail">Work email</label>
+          <input class="ui-input ui-input--lg" id="signinEmail" name="email" type="email" autocomplete="username" required>
+        </div>
+        <div class="ui-field">
+          <label class="ui-label" for="signinPassword">Password</label>
+          <input class="ui-input ui-input--lg" id="signinPassword" name="password" type="password" autocomplete="current-password" required>
+        </div>
+        <button class="ui-btn ui-btn--primary ui-btn--lg ui-btn--block" type="submit" id="signinSubmit">Sign in</button>
+      </form>
+      <p class="ui-subtle c-signin__foot">Sessions end after 8 hours of inactivity. Repeated wrong passwords lock the account for 15 minutes.</p>
+    </div>
+    <aside class="c-signin__aside" aria-hidden="true">
+      <div class="c-signin__aside-inner">
+        <p class="c-signin__eyebrow">Self-hosted UPI collections</p>
+        <p class="c-signin__claim">Every payment confirmed against bank evidence, never against a button press.</p>
+        <ul class="c-signin__points">
+          <li>Exact-amount matching in paise</li>
+          <li>Signed webhooks with retry history</li>
+          <li>Role-based access and a full audit trail</li>
+        </ul>
+      </div>
+    </aside>
+  </main>
+
+  <!-- App shell -->
+  <div id="app" class="c-shell" hidden>
+    <aside class="c-sidebar" id="sidebar" aria-label="Primary">
+      <div class="c-sidebar__brand">
+        <span class="c-brandmark" aria-hidden="true">Y</span>
+        <span class="c-brandname">YouPI <span>Console</span></span>
+      </div>
+      <div class="c-merchant" id="merchantBox"></div>
+      <nav class="c-nav" id="nav"></nav>
+      <div class="c-sidebar__foot">
+        <a class="c-nav__item" href="#/account" data-route="account" id="accountLink"></a>
+      </div>
+    </aside>
+    <div class="c-scrim" id="scrim" hidden></div>
+
+    <div class="c-main">
+      <header class="c-topbar">
+        <button class="ui-btn ui-btn--ghost ui-btn--icon c-menu-btn" id="menuBtn" aria-label="Open navigation" aria-controls="sidebar" aria-expanded="false"></button>
+        <div class="c-topbar__title">
+          <h1 id="pageTitle">Overview</h1>
+          <p id="pageSubtitle" class="ui-subtle"></p>
+        </div>
+        <div class="c-topbar__actions">
+          <span id="envBadge" class="ui-badge ui-badge--warning" hidden></span>
+          <button class="ui-btn ui-btn--ghost ui-btn--icon" id="themeBtn" aria-label="Switch colour theme"></button>
+          <button class="ui-btn ui-btn--ghost ui-btn--sm" id="signoutBtn">Sign out</button>
+        </div>
+      </header>
+      <main id="main" class="c-content" tabindex="-1"></main>
+    </div>
+  </div>
+
+  <div class="ui-toasts" id="toasts" role="status" aria-live="polite"></div>
+  <script type="module" src="/console/console.js"></script>
+</body>
+</html>
