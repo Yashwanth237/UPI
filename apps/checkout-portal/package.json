@@ -10,6 +10,7 @@
   },
   "dependencies": {
     "@youpi/common": "*",
-    "@youpi/core": "*"
+    "@youpi/core": "*",
+    "@youpi/ui": "*"
   }
 }
