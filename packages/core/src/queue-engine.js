@@ -63,6 +63,10 @@ export class QueueEngine {
           details: { receivingAccountId, queuePosition: result.queuePosition }
         });
       }
+
+      // The slot may be vacant but owed to an earlier queued session (see acquireSlotAtomic).
+      // Promote it now so the queue keeps moving; a no-op while the slot is occupied.
+      this.promoteNext(receivingAccountId, activeDurationMs);
     }
 
     return result;

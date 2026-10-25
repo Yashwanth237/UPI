@@ -575,6 +575,9 @@ describe('Issue #4: Terminal State Invariants and Re-activation Guards', () => {
         () => sessionRepo.transitionToProcessing(queuedSess.id),
         /Cannot transition to PROCESSING from status|Illegal payment state transition/
       );
+      // Leave the queue empty: a waiting session owns the next vacant slot (queue fairness),
+      // and the sessions below must take the slot themselves.
+      sessionRepo.transitionToTerminal(queuedSess.id, PaymentStatus.CANCELLED);
 
       // 3. SUCCESS session rejects transition to PROCESSING
       sessionRepo.transitionToTerminal(activeSess.id, PaymentStatus.SUCCESS);

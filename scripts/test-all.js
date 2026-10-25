@@ -8,6 +8,7 @@ const testFiles = [
   'packages/db/src/__tests__/schema-parity.test.js',
   'packages/core/src/__tests__/core.test.js',
   'packages/core/src/__tests__/queue-timing.test.js',
+  'packages/core/src/__tests__/queue-fairness.test.js',
   'packages/core/src/__tests__/webhook-engine.test.js',
   'packages/merchant-sdk/src/__tests__/merchant-sdk.test.js',
   'packages/youpi-mcp/src/__tests__/mcp-server.test.js',

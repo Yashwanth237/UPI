@@ -421,6 +421,10 @@ describe('Payment API End-to-End HTTP Integration Tests', () => {
     if (prevActive) {
       serverInstance.app.context.sessionRepo.transitionToTerminal(prevActive.id, PaymentStatus.CANCELLED);
     }
+    // Sessions left QUEUED by earlier tests own the next vacant slot (queue fairness): clear them too.
+    for (const queued of serverInstance.app.context.sessionRepo.findQueuedSessions('00000000-0000-0000-0000-000000000002')) {
+      serverInstance.app.context.sessionRepo.transitionToTerminal(queued.id, PaymentStatus.CANCELLED);
+    }
 
     // 1. Create a payment without pre-authenticated customer
     const createRes = await request('/api/v1/payments', {

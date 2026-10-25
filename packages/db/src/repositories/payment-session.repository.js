@@ -126,7 +126,20 @@ export class PaymentSessionRepository {
         };
       }
 
+      // Fairness: a vacant slot belongs to the head of the queue. Without this, a session
+      // created between a slot release and promoteNext() overtakes customers already waiting.
+      // The caller is queued instead and QueueEngine promotes the head.
+      let queueHeadId = null;
       if (!activeRow) {
+        queueHeadId = this.db.queryOne(`
+          SELECT id FROM payment_sessions
+          WHERE receiving_account_id = ? AND status = ?
+          ORDER BY queue_position ASC, created_at ASC
+          LIMIT 1
+        `, [receivingAccountId, PaymentStatus.QUEUED])?.id || null;
+      }
+
+      if (!activeRow && (!queueHeadId || queueHeadId === sessionId)) {
         // Slot is vacant! Grant ACTIVE slot.
         // Enforce the transition graph: a terminal or PROCESSING session must never be
         // revived to ACTIVE by a concurrent queue tick.
@@ -156,7 +169,7 @@ export class PaymentSessionRepository {
           expiresAt: new Date(expiresAt)
         };
       } else {
-        // Slot is busy! Place in QUEUED
+        // Slot is busy, or vacant but owed to the queue head. Place in QUEUED
         const existingSession = this.findById(sessionId);
         let queuePosition = existingSession?.queuePosition;
         if (!queuePosition || queuePosition <= 0) {
