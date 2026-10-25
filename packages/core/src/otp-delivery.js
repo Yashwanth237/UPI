@@ -404,10 +404,10 @@ export function createOtpDispatcherFromEnv(env = process.env, deps = {}) {
     transport: deps.emailTransport
   }));
 
-  // Development fallback: explicit opt-in, or automatic when nothing real is configured.
-  // Never in production (the constructor refuses).
-  const anyReal = providers.some(p => p.isConfigured());
-  if (!isProduction && (String(env.OTP_DEV_CONSOLE || '').toLowerCase() === 'true' || !anyReal)) {
+  // Development fallback: tried last, after every real provider, so a local setup keeps working
+  // when WhatsApp is not linked. OTP_DEV_CONSOLE=false disables it. Never in production (the
+  // constructor refuses), and responses say plainly that nothing was sent.
+  if (!isProduction && String(env.OTP_DEV_CONSOLE || '').toLowerCase() !== 'false') {
     providers.push(new DevConsoleOtpProvider({ env, logger }));
   }
 

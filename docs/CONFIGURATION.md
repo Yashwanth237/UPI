@@ -54,7 +54,7 @@ The API reports success **only when a provider accepted the message**; otherwise
 | `SMTP_USER` / `SMTP_PASSWORD` | unset | SMTP credentials. Secret |
 | `OTP_EMAIL_FROM` | unset | Sender, e.g. `YouPI <no-reply@pay.example.com>`. Email is disabled until this and `SMTP_HOST` are set |
 | `OTP_BRAND_NAME` | `DEFAULT_APP_NAME` | Brand used in the email subject and text |
-| `OTP_DEV_CONSOLE` | unset | Development only: print codes to the server console instead of sending them. Also used automatically when nothing else is configured outside production. **Cannot be enabled when `NODE_ENV=production`** |
+| `OTP_DEV_CONSOLE` | on outside production | Development only: when every real provider fails (or none is configured), print the code to the server console; the API response says it was not sent. Set `false` to disable. **Never active when `NODE_ENV=production`** |
 
 Notes:
 
