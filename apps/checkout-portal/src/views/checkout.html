@@ -1,11 +1,15 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en-IN" data-theme="light">
 
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#0f172a">
+  <link rel="preload" href="/ui/fonts/dm-sans.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="stylesheet" href="/ui/tokens.css?v=3">
   <title>{{MERCHANT_NAME}} · {{APP_NAME}} Checkout</title>
   <link rel="stylesheet" href="/css/checkout.css">
+  <link rel="stylesheet" href="/css/checkout-theme.css?v=3">
 </head>
 
 <body>
@@ -1597,27 +1601,35 @@
       // 4. Verified Trust Badge
       const trustBadgeEl = document.getElementById('headerTrustBadge');
       const trustBadgeTextEl = document.getElementById('headerTrustBadgeText');
+      // Merchant-authored wording only: the platform does not vouch for a merchant it has not vetted.
       if (trustBadgeEl) {
-        if (b.hideTrustBadge) {
+        if (b.hideTrustBadge || !b.trustBadgeText) {
           trustBadgeEl.style.display = 'none';
         } else {
           trustBadgeEl.style.display = 'inline-flex';
           if (trustBadgeTextEl) {
-            trustBadgeTextEl.textContent = b.trustBadgeText || `${appName} Verified Business`;
+            trustBadgeTextEl.textContent = b.trustBadgeText;
           }
         }
       }
 
-      // 5. Header Sub-banner
+      // 5. Header Sub-banner: the amount and order reference, so the customer always sees what
+      // they are paying (and for which order) before signing in. A merchant notice replaces it.
       const subbannerEl = document.getElementById('headerSubbanner');
       const subbannerTextEl = document.getElementById('subbannerText');
       if (subbannerEl) {
-        if (b.hideSubbanner) {
+        const merchantNotice = b.subbannerText || b.sidebarNotice || '';
+        const amountText = data.amount && Number.isFinite(Number(data.amount))
+          ? new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR', minimumFractionDigits: 2 }).format(Number(data.amount))
+          : (data.amount ? `₹${data.amount}` : '');
+        const summary = amountText ? `Pay ${amountText}${data.orderId ? ` · Order ${data.orderId}` : ''}` : '';
+        const text = merchantNotice || summary;
+        if ((b.hideSubbanner && merchantNotice) || !text) {
           subbannerEl.style.display = 'none';
         } else {
           subbannerEl.style.display = 'flex';
           if (subbannerTextEl) {
-            subbannerTextEl.textContent = b.subbannerText || b.sidebarNotice || `Verified & Protected by ${appName}`;
+            subbannerTextEl.textContent = text;
           }
         }
       }
@@ -1731,8 +1743,16 @@
           healthPill.className = 'ypg-server-health-indicator is-issues';
         }
       }
+      // Mirrors CONFIRMATION_COPY in checkout-portal/src/server.js: the tier measures whether the
+      // gateway can confirm UPI payments automatically, not whether UPI itself is down.
+      const CONFIRMATION_COPY = {
+        GREEN: { label: 'Instant confirmation' },
+        YELLOW: { label: 'Confirmation may be slower', heading: 'Confirmation may take a little longer', message: 'Pay as usual. If this page does not update within a minute of paying, keep your UPI reference (UTR) and contact support.' },
+        RED: { label: 'Automatic confirmation unavailable', heading: 'We cannot confirm UPI payments automatically right now', message: 'If you pay by UPI, this page may not update. Your money stays safe with your bank. Choose another method if one is offered, or keep your UPI reference (UTR) and contact support.' }
+      };
+      const copy = CONFIRMATION_COPY[tier] || CONFIRMATION_COPY.RED;
       if (healthLabel) {
-        healthLabel.textContent = serverIndicator.label || (tier === 'GREEN' ? 'Server Is Working' : (tier === 'YELLOW' ? 'UPI Server Busy' : 'Server Facing Issues'));
+        healthLabel.textContent = copy.label;
       }
       if (downtimeAlert) {
         if (tier === 'GREEN') {
@@ -1740,9 +1760,9 @@
         } else if (tier === 'YELLOW') {
           downtimeAlert.style.display = 'flex';
           downtimeAlert.className = 'ypg-downtime-alert is-warning';
-          if (downtimeHeading) downtimeHeading.textContent = 'UPI Server Busy';
+          if (downtimeHeading) downtimeHeading.textContent = copy.heading;
           if (downtimeMsg) {
-            downtimeMsg.textContent = serverIndicator.warning || 'Your payment may go through extra processing seconds.';
+            downtimeMsg.textContent = copy.message;
           }
           if (btnCashAlt) {
             btnCashAlt.style.display = (serverIndicator.recommendedAlternative === 'CASH') ? 'inline-block' : 'none';
@@ -1751,14 +1771,26 @@
           // RED
           downtimeAlert.style.display = 'flex';
           downtimeAlert.className = 'ypg-downtime-alert';
-          if (downtimeHeading) downtimeHeading.textContent = 'UPI Server Facing Issues';
+          if (downtimeHeading) downtimeHeading.textContent = copy.heading;
           if (downtimeMsg) {
-            downtimeMsg.textContent = serverIndicator.warning || 'It is not recommended to pay by UPI right now as the server is facing downtime. We recommend paying by cash instead.';
+            downtimeMsg.textContent = copy.message;
           }
           if (btnCashAlt) {
             btnCashAlt.style.display = (serverIndicator.recommendedAlternative === 'CASH') ? 'inline-block' : 'none';
           }
         }
+      }
+
+      // Same-device UPI intent: only for an ACTIVE session with a server-built upi://pay URI, and
+      // only where the customer is likely on a phone (touch, or a narrow screen).
+      const intentBox = document.getElementById('upiIntentBox');
+      const intentLink = document.getElementById('upiIntentLink');
+      if (intentBox && intentLink) {
+        const uri = typeof data.upiUri === 'string' ? data.upiUri : '';
+        const onPhone = window.matchMedia('(pointer: coarse)').matches || window.matchMedia('(max-width: 600px)').matches;
+        const usable = data.status === 'ACTIVE' && /^upi:\/\/pay\?/i.test(uri) && onPhone;
+        intentBox.hidden = !usable;
+        intentLink.setAttribute('href', usable ? uri : '#');
       }
 
       // CRITICAL INVARIANT: In all 3 states (Green, Yellow, Red), ALWAYS display the dynamic UPI QR code
@@ -1824,16 +1856,16 @@
         if (splashDefaultShield) splashDefaultShield.style.display = 'none';
       }
       if (splashSecuredText) {
-        splashSecuredText.textContent = b.hidePoweredBy ? (b.appName || '256-Bit Bank Encryption') : (b.appName || 'YouPI PG');
+        splashSecuredText.textContent = b.hidePoweredBy ? (b.appName || 'Secure checkout') : (b.appName || 'YouPI PG');
       }
 
       // 12. Legal Disclaimer Strip
       const legalDisclaimerEl = document.getElementById('footerLegalDisclaimer');
       if (legalDisclaimerEl) {
         if (b.hidePoweredBy) {
-          legalDisclaimerEl.innerHTML = `Secured by 256-Bit Bank Encryption &bull; <span style="text-decoration:underline; cursor:pointer;" onclick="openHelpModal()">Privacy &amp; Terms</span>`;
+          legalDisclaimerEl.innerHTML = `Confirmed only after your bank reports the payment &bull; <span style="text-decoration:underline; cursor:pointer;" onclick="openHelpModal()">Privacy &amp; Terms</span>`;
         } else {
-          legalDisclaimerEl.innerHTML = `Secured by ${escapeHtml(appName)} &amp; 256-Bit Bank Encryption &bull; <span style="text-decoration:underline; cursor:pointer;" onclick="openHelpModal()">Privacy Notice</span>`;
+          legalDisclaimerEl.innerHTML = `Powered by ${escapeHtml(appName)} · confirmed only after your bank reports the payment &bull; <span style="text-decoration:underline; cursor:pointer;" onclick="openHelpModal()">Privacy Notice</span>`;
         }
       }
 

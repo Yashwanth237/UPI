@@ -176,6 +176,24 @@ describe('UPI Server Health Indicator & Checkout State Invariants', () => {
     assert.ok(healthRes.body.falseNarrativeRemainingSeconds > 0);
   });
 
+  test('False narrative is never honoured in production (customer status must match reality)', async () => {
+    const merchant = testDb.queryOne(`SELECT branding FROM merchants WHERE id = '00000000-0000-0000-0000-000000000001'`);
+    const branding = JSON.parse(merchant?.branding || '{}');
+    branding.falseNarrativeUntil = Date.now() + 5 * 60 * 1000;
+    branding.falseNarrativeMode = 'GREEN';
+    testDb.execute(`UPDATE merchants SET branding = ? WHERE id = '00000000-0000-0000-0000-000000000001'`, [JSON.stringify(branding)]);
+    const previous = process.env.NODE_ENV;
+    process.env.NODE_ENV = 'production';
+    try {
+      const healthRes = await request('/api/v1/checkout/server-health');
+      assert.equal(healthRes.status, 200);
+      assert.notEqual(healthRes.body.isFalseNarrative, true);
+      assert.equal(healthRes.body.status, 'ISSUES', 'live status (no observers) is reported, not the override');
+    } finally {
+      process.env.NODE_ENV = previous;
+    }
+  });
+
   test('Dev settings: False narrative automatically expires after 10 minutes and reverts to live status', async () => {
     // Set falseNarrativeUntil in the past (simulating 10 minutes elapsed)
     const merchant = testDb.queryOne(`SELECT branding FROM merchants WHERE id = '00000000-0000-0000-0000-000000000001'`);

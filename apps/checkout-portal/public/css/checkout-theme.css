@@ -1,0 +1,217 @@
+/*
+ * Checkout theme layer on the shared YouPI design tokens (/ui/tokens.css).
+ *
+ * Loaded after checkout.css. It restyles, it does not restructure: every id/class the checkout
+ * script and its tests depend on is unchanged. Merchant branding still drives --ypg-blue (header
+ * and primary action). The checkout is always light (html[data-theme="light"]) because it sits
+ * inside merchant sites.
+ */
+
+:root {
+  --ypg-font: var(--font-sans);
+  --ypg-text-dark: var(--color-text);
+  --ypg-text-muted: var(--color-text-muted);
+  --ypg-border: var(--color-border);
+  --ypg-border-light: var(--ink-100);
+  --ypg-bg: var(--color-surface-2);
+  --ypg-green: var(--color-success);
+  --ypg-green-bg: var(--color-success-soft);
+  --ypg-danger: var(--color-danger);
+  --ypg-radius: 12px;
+  --ypg-touch: 48px;
+}
+
+/* ---------- Base ---------- */
+body {
+  font-family: var(--font-sans);
+  background: radial-gradient(900px 500px at 50% -10%, #1d3fb8 0%, #0b1220 60%) fixed;
+  -webkit-font-smoothing: antialiased;
+}
+body.is-embedded { background: transparent; }
+* { font-family: inherit; }
+body, button, input, select, textarea { font-family: var(--font-sans); }
+
+.ypg-wrapper { box-shadow: 0 30px 80px -20px rgba(2, 6, 23, 0.6); }
+@media (min-width: 601px) {
+  body:not(.is-embedded) .ypg-wrapper { border-radius: 20px; }
+}
+
+.ypg-page-title,
+.ypg-success-title,
+.ypg-merchant-name,
+.ypg-pc-merchant-name {
+  font-family: var(--font-display);
+  letter-spacing: -0.015em;
+}
+.ypg-page-title { font-weight: 600; color: var(--color-text); }
+
+/* Money and time always use tabular figures so digits do not jitter while counting down. */
+#activeTimerText,
+.ypg-countdown-pill,
+.ypg-success-amount,
+.ypg-pc-price-val,
+#pcPriceSummaryAmount,
+#subbannerText,
+.ypg-queue-number {
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: 'tnum' 1;
+}
+
+/* ---------- Header ---------- */
+.ypg-header-subbanner {
+  font-weight: 600;
+  letter-spacing: 0.01em;
+}
+.ypg-merchant-avatar { border-radius: 12px; }
+.ypg-btn-back,
+.ypg-btn-profile {
+  min-width: 40px;
+  min-height: 40px;
+}
+
+/* ---------- Focus: always visible for keyboard users ---------- */
+:focus { outline: none; }
+:focus-visible {
+  outline: 3px solid var(--color-focus);
+  outline-offset: 2px;
+  border-radius: 8px;
+}
+.ypg-header :focus-visible { outline-color: #ffffff; }
+
+/* ---------- Forms ---------- */
+.ypg-input-label {
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  color: var(--color-text-muted);
+}
+.ypg-input-control,
+.ypg-phone-control,
+#authOtpInput,
+#authSignupName,
+#authSignupEmail,
+#authMobileInput {
+  min-height: var(--ypg-touch);
+  font-size: 16px; /* >= 16px stops iOS from zooming the page on focus */
+  border-radius: var(--ypg-radius);
+}
+.ypg-phone-input-wrap {
+  min-height: var(--ypg-touch);
+  border-radius: var(--ypg-radius);
+}
+.ypg-phone-input-wrap:focus-within,
+.ypg-input-control:focus {
+  border-color: var(--color-focus) !important;
+  box-shadow: var(--focus-ring) !important;
+}
+#authOtpInput {
+  letter-spacing: 0.4em;
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+  font-weight: 600;
+}
+
+/* ---------- Buttons ---------- */
+.ypg-btn-auth-action,
+.ypg-btn-expired-primary,
+.ypg-btn-continue,
+#btnContinuePayment {
+  min-height: var(--ypg-touch);
+  border-radius: var(--ypg-radius);
+  font-weight: 600;
+  letter-spacing: 0.005em;
+  transition: filter var(--duration-fast) var(--ease-out), transform var(--duration-fast) var(--ease-out);
+}
+.ypg-btn-auth-action:hover,
+#btnContinuePayment:hover { filter: brightness(1.06); }
+.ypg-btn-auth-action:active,
+#btnContinuePayment:active { transform: translateY(1px); }
+.ypg-btn-auth-action[disabled],
+#btnContinuePayment[disabled] {
+  filter: none;
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+.ypg-btn-link { min-height: 40px; font-weight: 600; }
+
+/* ---------- Method tabs ---------- */
+.ypg-method-tab {
+  min-height: 44px;
+  border-radius: 10px;
+  font-weight: 600;
+}
+.ypg-pc-method-card { border-radius: var(--ypg-radius); }
+.ypg-pc-method-card.is-active { box-shadow: 0 0 0 2px var(--ypg-blue) inset; }
+
+/* ---------- Timer ---------- */
+.ypg-countdown-pill {
+  font-weight: 700;
+  border-radius: 999px;
+}
+
+/* ---------- QR card ---------- */
+.ypg-qr-card-container { border-radius: 16px; }
+.ypg-qr-image-box {
+  background: #ffffff;
+  border-radius: 16px;
+  border: 1px solid var(--color-border);
+  box-shadow: var(--shadow-sm);
+}
+.ypg-qr-image-box img,
+.ypg-qr-image-box svg {
+  image-rendering: pixelated; /* keeps QR modules crisp when scaled */
+}
+.ypg-qr-prompt-title { font-family: var(--font-display); font-weight: 600; }
+
+/* ---------- Instructions, cards, dialogs ---------- */
+.ypg-instructions-card,
+.ypg-queue-conversion-card,
+.ypg-dialog-card,
+.ypg-auth-box,
+.ypg-success-box {
+  border-radius: 16px;
+}
+.ypg-step-num {
+  font-variant-numeric: tabular-nums;
+  font-weight: 700;
+}
+.ypg-dialog-overlay { backdrop-filter: blur(2px); }
+
+/* ---------- Status ---------- */
+.ypg-success-circle { box-shadow: 0 0 0 10px rgba(21, 128, 61, 0.08); }
+.ypg-success-amount { font-family: var(--font-display); font-weight: 600; }
+
+/* ---------- Toast ---------- */
+.ypg-toast {
+  border-radius: 12px;
+  font-weight: 500;
+  box-shadow: var(--shadow-lg);
+}
+
+/* ---------- Safe areas (notched phones, home indicator) ---------- */
+.ypg-sticky-footer { padding-bottom: max(12px, env(safe-area-inset-bottom)); }
+@media (max-width: 600px) {
+  .ypg-header { padding-top: max(0px, env(safe-area-inset-top)); }
+}
+
+/* ---------- Reduced motion ---------- */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/* ---------- Same-device UPI intent ---------- */
+.ypg-upi-intent { display: flex; flex-direction: column; gap: 6px; margin: 12px 0 4px; }
+.ypg-btn-upi-intent {
+  display: inline-flex; align-items: center; justify-content: center; gap: 10px;
+  min-height: var(--ypg-touch); padding: 0 16px; border-radius: var(--ypg-radius);
+  background: var(--ypg-blue); color: #ffffff; font-weight: 600; font-size: 15px; text-decoration: none;
+  box-shadow: 0 6px 16px -6px rgba(29, 78, 216, 0.55);
+}
+.ypg-btn-upi-intent img { height: 16px; width: auto; background: #fff; border-radius: 4px; padding: 2px 4px; }
+.ypg-btn-upi-intent:hover { filter: brightness(1.06); }
+.ypg-upi-intent-note { font-size: 12px; line-height: 1.45; color: var(--color-text-muted); }

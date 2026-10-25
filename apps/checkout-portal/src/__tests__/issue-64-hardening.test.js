@@ -122,8 +122,13 @@ describe('Issue #64 hardening: returnUrl, branding sinks, postMessage, framing',
     });
 
     test('appName no longer reaches innerHTML unescaped', () => {
-      assert.ok(checkoutView.includes('Secured by ${escapeHtml(appName)}'));
-      assert.equal(checkoutView.includes('Secured by ${appName}'), false);
+      // The footer disclaimer interpolates appName into innerHTML; it must always be escaped.
+      const disclaimerLines = checkoutView.split('\n').filter(l => l.includes('legalDisclaimerEl.innerHTML') && l.includes('appName'));
+      assert.ok(disclaimerLines.length >= 1);
+      for (const line of disclaimerLines) {
+        assert.ok(line.includes('${escapeHtml(appName)}'), line.trim());
+        assert.equal(line.includes('${appName}'), false, line.trim());
+      }
     });
 
     test('legal links accept https only and escape the href', () => {

@@ -4,9 +4,28 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { generateQrSvg } from '@youpi/core';
 import { getInternalServiceToken } from '@youpi/common';
+import { serveUiAsset } from '@youpi/ui';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
+
+/**
+ * Checkout wording for the payment-confirmation health tier. Mirrored in checkout.html
+ * (CONFIRMATION_COPY) for live updates; keep the two in sync.
+ */
+export const CONFIRMATION_COPY = Object.freeze({
+  GREEN: { label: 'Instant confirmation', heading: '', message: '' },
+  YELLOW: {
+    label: 'Confirmation may be slower',
+    heading: 'Confirmation may take a little longer',
+    message: 'Pay as usual. If this page does not update within a minute of paying, keep your UPI reference (UTR) and contact support.'
+  },
+  RED: {
+    label: 'Automatic confirmation unavailable',
+    heading: 'We cannot confirm UPI payments automatically right now',
+    message: 'If you pay by UPI, this page may not update. Your money stays safe with your bank. Choose another method if one is offered, or keep your UPI reference (UTR) and contact support.'
+  }
+});
 
 /** Security headers applied to every response served by the portal. */
 const BASE_SECURITY_HEADERS = Object.freeze({
@@ -225,7 +244,7 @@ export class CheckoutServer {
     const merchantName = state?.merchantName || 'Merchant Checkout';
     const orderId = state?.orderId || '';
     const logoUrl = state?.branding?.logoUrl || '';
-    const sidebarNotice = state?.branding?.sidebarNotice || 'Fast & Secure 256-Bit Encrypted Payments';
+    const sidebarNotice = state?.branding?.sidebarNotice || '';
     const counterInstructions = state?.branding?.counterInstructions || 'Please visit the billing counter and present this screen to the cashier.';
     const vpa = state?.payeeVpa || state?.vpa || 'merchant@upi';
 
@@ -236,13 +255,14 @@ export class CheckoutServer {
     const indicator = state?.upiServerIndicator || { status: 'ISSUES', tier: 'RED', label: 'Server Facing Issues' };
     const tier = indicator.tier || (indicator.status === 'WORKING' ? 'GREEN' : (indicator.status === 'BUSY' ? 'YELLOW' : 'RED'));
     const healthClass = tier === 'GREEN' ? 'is-working' : (tier === 'YELLOW' ? 'is-busy' : 'is-issues');
-    const healthLabel = indicator.label || (tier === 'GREEN' ? 'Server Is Working' : (tier === 'YELLOW' ? 'UPI Server Busy' : 'Server Facing Issues'));
+    // Customer-facing wording describes what the tier really measures: whether this gateway can
+    // confirm a UPI payment automatically (its bank-alert observers), not the state of UPI itself.
+    const copy = CONFIRMATION_COPY[tier] || CONFIRMATION_COPY.RED;
+    const healthLabel = copy.label;
     const alertStyle = tier === 'GREEN' ? 'none' : 'flex';
     const alertClass = tier === 'YELLOW' ? 'ypg-downtime-alert is-warning' : 'ypg-downtime-alert';
-    const alertHeading = tier === 'YELLOW' ? 'UPI Server Busy' : 'UPI Server Facing Issues';
-    const alertMsg = indicator.warning || (tier === 'YELLOW'
-      ? 'Your payment may go through extra processing seconds.'
-      : 'It is not recommended to pay by UPI right now as the server is facing downtime. We recommend paying by cash instead.');
+    const alertHeading = copy.heading;
+    const alertMsg = copy.message;
 
     const sellingMode = state?.sellingMode || state?.branding?.sellingMode || 'ONLINE';
     const enabledMethods = state?.enabledMethods || state?.branding?.enabledPaymentMethods || ['UPI'];
@@ -357,6 +377,9 @@ export class CheckoutServer {
         }
         return;
       }
+
+      // Shared design system (tokens + self-hosted fonts)
+      if (serveUiAsset(pathname, req, res)) return;
 
       // Static icons: GET /icons/:filename with path traversal protection
       if (pathname.startsWith('/icons/')) {

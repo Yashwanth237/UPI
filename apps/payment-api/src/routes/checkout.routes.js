@@ -161,7 +161,9 @@ async function checkUpiServerHealth(ctx, enabledMethods = [], sellingMode = 'OFF
     const merchant = ctx.merchantRepo?.findById ? ctx.merchantRepo.findById(merchantId) : null;
     const falseNarrativeUntil = merchant?.branding?.falseNarrativeUntil;
     const falseNarrativeMode = (merchant?.branding?.falseNarrativeMode || 'GREEN').toUpperCase();
-    if (falseNarrativeUntil && Number(falseNarrativeUntil) > Date.now()) {
+    // Development-only override of the customer-facing confirmation status. It is never honoured
+    // in production: showing customers a status that does not match reality is deceptive.
+    if (process.env.NODE_ENV !== 'production' && falseNarrativeUntil && Number(falseNarrativeUntil) > Date.now()) {
       const remainingSeconds = Math.max(0, Math.round((Number(falseNarrativeUntil) - Date.now()) / 1000));
       if (falseNarrativeMode === 'GREEN') {
         return {

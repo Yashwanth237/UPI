@@ -172,6 +172,15 @@
                     </div>
                   </div>
                 </div>
+                <!-- Same-device payment: a phone cannot scan its own screen, so offer the UPI intent.
+                     The href is the server-built upi://pay URI for this ACTIVE session only. -->
+                <div class="ypg-upi-intent" id="upiIntentBox" hidden>
+                  <a class="ypg-btn-upi-intent" id="upiIntentLink" href="#" rel="noopener">
+                    <img src="/icons/upi.svg" alt="" aria-hidden="true" />
+                    <span>Pay with a UPI app on this phone</span>
+                  </a>
+                  <p class="ypg-upi-intent-note">Opens your UPI app with the amount filled in. Do not change the amount, or the payment cannot be matched.</p>
+                </div>
                 <!-- UPI Payment Instructions Guide -->
                 <div class="ypg-instructions-card">
                   <div class="ypg-instruction-step">
