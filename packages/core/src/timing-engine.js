@@ -199,7 +199,11 @@ export class TimingEngine {
    * Immediately releases slot and promotes next queued customer.
    * @param {string} sessionId
    */
-  handleCancel(sessionId) {
+  /**
+   * @param {string} sessionId
+   * @param {{ actorType?: string, actorId?: string, reason?: string }} [actor] defaults to the customer
+   */
+  handleCancel(sessionId, actor = {}) {
     const session = this.sessionRepo.findById(sessionId);
     if (!session) return null;
 
@@ -216,9 +220,10 @@ export class TimingEngine {
         merchantId: session.merchantId,
         entityType: 'PAYMENT_SESSION',
         entityId: sessionId,
-        action: 'PAYMENT_CANCELLED_BY_USER',
-        actorType: 'CUSTOMER',
-        details: { previousStatus: session.status }
+        action: actor.actorType && actor.actorType !== 'CUSTOMER' ? 'PAYMENT_CANCELLED_BY_OPERATOR' : 'PAYMENT_CANCELLED_BY_USER',
+        actorType: actor.actorType || 'CUSTOMER',
+        actorId: actor.actorId || null,
+        details: { previousStatus: session.status, ...(actor.reason ? { reason: actor.reason } : {}) }
       });
     }
 

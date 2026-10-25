@@ -12,6 +12,16 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 /**
+ * Numbered schema migrations. Append only; never renumber or remove an entry.
+ * 1: everything up to and including the 10 original table groups (pre-ledger installs).
+ * 2: staff identity (staff_users, staff_sessions) and the ledger itself.
+ */
+export const SCHEMA_MIGRATIONS = Object.freeze([
+  [1, 'baseline_payment_gateway'],
+  [2, 'staff_identity_and_sessions']
+]);
+
+/**
  * Runs database migrations and applies base seeds.
  * @param {import('./database.js').Database} [targetDb]
  */
@@ -66,6 +76,12 @@ export function runMigrations(targetDb) {
 
   // Execute schema DDL
   db.exec(schemaSql);
+
+  // Versioned ledger. The DDL above is idempotent (CREATE ... IF NOT EXISTS); the ledger records
+  // which numbered, additive migrations a database has received so operators can audit upgrades.
+  for (const [version, name] of SCHEMA_MIGRATIONS) {
+    db.execute('INSERT OR IGNORE INTO schema_migrations (version, name, applied_at) VALUES (?, ?, ?)', [version, name, new Date().toISOString()]);
+  }
 
   // Alter table columns if migrating existing databases
   try { db.exec("ALTER TABLE payment_sessions ADD COLUMN verification_level INTEGER DEFAULT 0;"); } catch {}

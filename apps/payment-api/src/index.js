@@ -29,7 +29,9 @@ import {
   ObservationRepository,
   SupportTicketRepository,
   AuditLogRepository,
-  DeviceRepository
+  DeviceRepository,
+  StaffRepository,
+  StaffSessionRepository
 } from '@youpi/db';
 import {
   QueueEngine,
@@ -48,6 +50,8 @@ import { registerPollerRoutes } from './routes/pollers.routes.js';
 import { registerAdminRoutes } from './routes/admin.routes.js';
 import { registerCustomerRoutes } from './routes/customer.routes.js';
 import { registerDeviceRoutes } from './routes/device.routes.js';
+import { registerStaffRoutes } from './routes/staff.routes.js';
+import { registerConsoleRoutes } from './routes/console.routes.js';
 import { getWhatsAppBerryService, WhatsAppBerryService } from './services/whatsapp-berry.service.js';
 import { ObserverPollerService } from './services/observer-poller.service.js';
 
@@ -72,6 +76,8 @@ export function createPaymentApp(customDb = null, options = {}) {
   const ticketRepo = new SupportTicketRepository(db);
   const auditRepo = new AuditLogRepository(db);
   const deviceRepo = new DeviceRepository(db);
+  const staffRepo = new StaffRepository(db);
+  const staffSessionRepo = new StaffSessionRepository(db);
 
   const eventEmitter = new EventEmitter();
 
@@ -133,7 +139,7 @@ export function createPaymentApp(customDb = null, options = {}) {
   });
 
   const server = new HttpServer();
-  server.use(authGuard);
+  server.use((req, res, pathname, url) => authGuard(req, res, pathname, url, { staffRepo, staffSessionRepo }));
   let checkoutBaseUrl = process.env.BASE_CHECKOUT_URL || 'http://localhost:7000';
   try {
     const rootEnv = path.resolve(__dirname, '../../../.env');
@@ -378,10 +384,13 @@ export function createPaymentApp(customDb = null, options = {}) {
     defaultMerchant,
     checkoutBaseUrl,
     whatsappBerryService,
+    staffRepo,
+    staffSessionRepo,
     otpDispatcher: options.otpDispatcher || createOtpDispatcherFromEnv(process.env, { linkedDeviceService: whatsappBerryService }),
     webhookEngine,
     observerPollerService,
-    otpCooldownMs: options.otpCooldownMs
+    otpCooldownMs: options.otpCooldownMs,
+    staffLoginRateLimit: options.staffLoginRateLimit
   };
 
   registerPaymentRoutes(server, context);
@@ -390,6 +399,8 @@ export function createPaymentApp(customDb = null, options = {}) {
   registerAdminRoutes(server, context);
   registerCustomerRoutes(server, context);
   registerDeviceRoutes(server, context);
+  registerStaffRoutes(server, context);
+  registerConsoleRoutes(server, context);
 
   function destroy() {
     clearInterval(queueSyncDaemon);

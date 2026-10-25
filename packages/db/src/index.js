@@ -10,3 +10,4 @@ export * from './repositories/support-ticket.repository.js';
 export * from './repositories/audit-log.repository.js';
 export * from './repositories/device.repository.js';
 
+export * from './repositories/staff.repository.js';

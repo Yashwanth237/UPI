@@ -1,4 +1,5 @@
-import { getAdminToken, getObserverToken, safeEqual, hasBearer } from '@youpi/common';
+import { getAdminToken, getObserverToken, safeEqual, hasBearer, Permission, roleHasPermission } from '@youpi/common';
+import { resolveStaffPrincipal, verifyCsrf } from './staff-auth.js';
 import { HttpServer } from './server.js';
 
 /** Admin-prefixed routes that are intentionally public (static APK download for pairing). */
@@ -37,7 +38,7 @@ function requiredLevel(method, pathname) {
  * Guard for HttpServer.use(). Admin credential = ADMIN_API_TOKEN (or data/.secrets/admin_api_token).
  * Observer credential = OBSERVER_API_TOKEN (or data/.secrets/observer_api_token); admin token also satisfies it.
  */
-export function authGuard(req, res, pathname, url) {
+export function authGuard(req, res, pathname, url, staffCtx = null) {
   const method = req.method.toUpperCase();
 
   // Developer simulators push synthetic bank messages into the real pipeline and can settle live sessions.
@@ -60,6 +61,19 @@ export function authGuard(req, res, pathname, url) {
     (level === 'observer' && safeEqual(presented, getObserverToken()))
   );
   if (ok) return false;
+
+  // A signed-in staff member whose role carries `legacy:admin` (platform administrators) may
+  // use the legacy admin API with their session cookie; state changes need the CSRF token.
+  if (level === 'admin' && staffCtx) {
+    const principal = resolveStaffPrincipal(req, staffCtx);
+    if (principal && principal.kind === 'staff' && roleHasPermission(principal.role, Permission.LEGACY_ADMIN)) {
+      if (!verifyCsrf(req, principal)) {
+        HttpServer.json(res, 403, { error: 'Security token missing or invalid.', code: 'CSRF_FAILED' });
+        return true;
+      }
+      return false;
+    }
+  }
 
   HttpServer.json(res, 401, { error: 'Unauthorized', code: 'AUTH_REQUIRED' });
   return true;

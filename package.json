@@ -12,6 +12,8 @@
     "build": "tsc -b",
     "clean": "node scripts/clean.js",
     "db:setup": "node scripts/init-db.cjs",
+    "db:backup": "node scripts/backup-db.js",
+    "staff:create": "node scripts/create-staff-user.js",
     "sync:package": "node scripts/sync-package.cjs",
     "start": "node scripts/start.js",
     "start:prod": "node scripts/start.js",

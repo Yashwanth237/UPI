@@ -269,3 +269,48 @@ CREATE INDEX IF NOT EXISTS idx_security_events_type ON security_events (event_ty
 
 
 
+
+-- 11. Versioned migration ledger (additive; records which numbered migrations ran)
+CREATE TABLE IF NOT EXISTS schema_migrations (
+    version INTEGER PRIMARY KEY,
+    name TEXT NOT NULL,
+    applied_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+-- 12. Staff identity (merchant operators, cashiers, support, platform administrators)
+-- merchant_id NULL = platform scope (platform_admin only).
+CREATE TABLE IF NOT EXISTS staff_users (
+    id TEXT PRIMARY KEY,
+    merchant_id TEXT REFERENCES merchants(id) ON DELETE CASCADE,
+    email TEXT NOT NULL UNIQUE,
+    full_name TEXT NOT NULL,
+    role TEXT NOT NULL,
+    password_hash TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'ACTIVE',
+    failed_login_count INTEGER NOT NULL DEFAULT 0,
+    locked_until TEXT,
+    password_changed_at TEXT,
+    last_login_at TEXT,
+    created_by TEXT,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_staff_users_merchant ON staff_users (merchant_id);
+
+-- 13. Staff sessions: opaque tokens and CSRF tokens are stored as SHA-256 hashes only.
+CREATE TABLE IF NOT EXISTS staff_sessions (
+    id TEXT PRIMARY KEY,
+    staff_user_id TEXT NOT NULL REFERENCES staff_users(id) ON DELETE CASCADE,
+    token_hash TEXT NOT NULL UNIQUE,
+    csrf_token_hash TEXT NOT NULL,
+    ip_address TEXT,
+    user_agent TEXT,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    last_seen_at TEXT NOT NULL DEFAULT (datetime('now')),
+    expires_at TEXT NOT NULL,
+    revoked_at TEXT,
+    revoke_reason TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_staff_sessions_user ON staff_sessions (staff_user_id);
