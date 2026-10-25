@@ -603,7 +603,7 @@ describe('Gateway Hardening & Invariant Protection Test Suite (#23, #25, #26, #2
     assert.equal(res.body.code, 'INVALID_MERCHANT_KEY');
   });
 
-  test('Issue #2: POST /api/v1/customer/check-user masks customer email to prevent PII harvesting', async () => {
+  test('Issue #2: POST /api/v1/customer/check-user discloses no profile data before OTP (PII harvesting)', async () => {
     const customerRepo = new CustomerRepository(testDb);
     const uniquePhone = `98${Math.floor(10000000 + Math.random() * 90000000)}`;
     customerRepo.create({
@@ -619,8 +619,10 @@ describe('Gateway Hardening & Invariant Protection Test Suite (#23, #25, #26, #2
 
     assert.equal(res.status, 200);
     assert.equal(res.body.exists, true);
-    assert.equal(res.body.customer.name, 'Secret User');
-    assert.match(res.body.customer.email, /^se\*\*\*@corporate\.example\.com$/);
+    assert.equal(res.body.customer, null);
+    const raw = JSON.stringify(res.body);
+    assert.ok(!raw.includes('Secret User'), 'name must not be disclosed before OTP');
+    assert.ok(!raw.includes('corporate.example.com'), 'email (even masked) must not be disclosed before OTP');
   });
 
   test('Issue #2: COD endpoints mask customer email and mobile for unauthenticated callers', async () => {

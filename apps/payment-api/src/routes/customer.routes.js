@@ -8,21 +8,6 @@ const OTP_MAX_ATTEMPTS = 5;
 const OTP_RESEND_COOLDOWN_MS = 30 * 1000;
 
 /**
- * Safely masks customer email address for public responses without leaking length or erroring on short strings.
- * @param {string} email
- * @returns {string | null}
- */
-function maskEmail(email) {
-  if (!email || typeof email !== 'string') return null;
-  const atIndex = email.indexOf('@');
-  if (atIndex <= 0) return '***';
-  const user = email.slice(0, atIndex);
-  const domain = email.slice(atIndex + 1);
-  const visible = user.slice(0, Math.min(2, user.length));
-  return `${visible}***@${domain || '***'}`;
-}
-
-/**
  * Registers gateway-owned customer identity and session routes.
  * @param {HttpServer} server
  * @param {{
@@ -121,10 +106,6 @@ export function registerCustomerRoutes(server, ctx) {
     };
   }
 
-  // Helper to get Berry Service
-  function getBerry() {
-    return ctx.whatsappBerryService || null;
-  }
 
   // 1. POST /api/v1/customer/check-user
   // Check whether a customer exists by mobile number
@@ -159,16 +140,14 @@ export function registerCustomerRoutes(server, ctx) {
 
     const existingUser = ctx.customerRepo.findByMobile(cleanMobile);
 
+    // Only the sign-in vs sign-up decision is disclosed. Returning the holder's name and
+    // (masked) email let anyone harvest identities for arbitrary mobile numbers before
+    // proving possession of the number; the profile is returned after OTP verification.
     HttpServer.json(res, 200, {
       success: true,
       exists: Boolean(existingUser),
       mobileNumber: cleanMobile,
-      customer: existingUser ? {
-        id: existingUser.id,
-        name: existingUser.name,
-        email: maskEmail(existingUser.email),
-        mobileNumber: cleanMobile
-      } : null
+      customer: null // kept for client compatibility; never populated before OTP verification
     });
   });
 
@@ -235,31 +214,61 @@ export function registerCustomerRoutes(server, ctx) {
       });
     }
 
-    // Dispatch via WhatsApp Berry Protocol
-    const berry = getBerry();
-    let dispatchResult = { success: true, delivered: false, simulated: true };
+    // Deliver through the configured channel policy (WhatsApp / email, with fallback).
+    // Success is only reported when a provider accepted the message.
     const displayName = existingUser?.name || name || '';
-
-    if (berry) {
-      try {
-        dispatchResult = await berry.sendOtp(cleanMobile, otpCode, displayName);
-      } catch (err) {
-        console.warn(`[CustomerAuth] WhatsApp dispatch notice: ${err.message}`);
+    const preferredChannel = ['whatsapp', 'email'].includes(body.channel) ? body.channel : undefined;
+    let delivery;
+    try {
+      if (!ctx.otpDispatcher) {
+        throw new Error('No OTP dispatcher configured');
       }
-    } else {
-      console.log(`[CustomerAuth] Berry service not loaded; OTP for ${cleanMobile} was not delivered.`);
+      delivery = await ctx.otpDispatcher.send({
+        mobile: cleanMobile,
+        email: existingUser?.email || (isNewUser ? email : null),
+        code: otpCode,
+        name: displayName,
+        ttlSeconds: 300,
+        preferredChannel
+      });
+    } catch (err) {
+      // An undeliverable code must not stay valid.
+      if (existingUser) {
+        ctx.customerRepo.clearOtp(cleanMobile);
+      } else {
+        pendingOtpChallenges.delete(cleanMobile);
+      }
+      ctx.auditRepo?.log({
+        entityType: 'CUSTOMER_AUTH',
+        entityId: existingUser?.id || `mobile:******${cleanMobile.slice(-4)}`,
+        action: 'OTP_DELIVERY_FAILED',
+        actorType: 'SYSTEM',
+        details: { attempts: err.attempts || [], reason: err.code || 'OTP_DELIVERY_FAILED' }
+      });
+      console.warn(`[CustomerAuth] OTP delivery failed for ******${cleanMobile.slice(-4)}: ${err.code || err.message}`);
+      HttpServer.json(res, 503, {
+        success: false,
+        code: 'OTP_DELIVERY_UNAVAILABLE',
+        error: 'We could not send a verification code right now. Please try again in a moment.'
+      });
+      return;
     }
 
-    console.log(`[CustomerAuth] OTP generated for +91${cleanMobile} (expires in 5 mins)`);
+    const channelLabel = delivery.channel === 'email' ? 'email' : 'WhatsApp';
+    console.log(`[CustomerAuth] OTP issued via ${delivery.provider} to ${delivery.destination} (expires in 5 mins)`);
 
     HttpServer.json(res, 200, {
       success: true,
-      message: 'OTP sent to your WhatsApp number.',
+      message: delivery.simulated && process.env.NODE_ENV !== 'production'
+        ? 'Development mode: the code was not sent to a real device. Check the server console.'
+        : `We sent a 6-digit code to your ${channelLabel} (${delivery.destination}).`,
       mobileNumber: cleanMobile,
+      channel: delivery.channel,
+      destination: delivery.destination,
+      fallbackUsed: delivery.attempts.length > 0,
       expiresInSeconds: 300,
       // Returning the OTP lets anyone log in as any number: only on explicit opt-in, never in production.
-      devOtp: (process.env.YOUPI_EXPOSE_DEV_OTP === 'true' && process.env.NODE_ENV !== 'production' ? otpCode : undefined),
-      dispatch: dispatchResult
+      devOtp: (process.env.YOUPI_EXPOSE_DEV_OTP === 'true' && process.env.NODE_ENV !== 'production' ? otpCode : undefined)
     });
   });
 

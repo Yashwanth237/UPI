@@ -192,6 +192,19 @@ export class CustomerRepository {
    * @param {string} expiresAt ISO String
    * @returns {any | null}
    */
+  /**
+   * Withdraws the outstanding OTP challenge (e.g. when it could not be delivered).
+   * @param {string} mobileNumber
+   */
+  clearOtp(mobileNumber) {
+    const normalized = normalizeMobile(mobileNumber);
+    if (!normalized) return;
+    this.db.execute(
+      'UPDATE customers SET otp_code = NULL, otp_expires_at = NULL, otp_attempts = 0, updated_at = ? WHERE mobile_number = ?',
+      [new Date().toISOString(), normalized]
+    );
+  }
+
   setOtp(mobileNumber, otpCode, expiresAt) {
     const normalized = normalizeMobile(mobileNumber);
     if (!normalized) return null;

@@ -16,11 +16,7 @@ async function loadDependencies() {
     const candidates = [
       'berryprotocol',
       pathToFileURL(path.resolve(rootDir, 'node_modules/berryprotocol/dist/index.js')).href,
-      pathToFileURL(path.resolve(rootDir, 'apps/payment-api/node_modules/berryprotocol/dist/index.js')).href,
-      'file:///D:/WA-USERAUTH DEV/node_modules/berryprotocol/dist/index.js',
-      'file:///D:/E-Commerce PKG/services/whatsapp-worker/node_modules/berryprotocol/dist/index.js',
-      'file:///D:/ECOM AND YOUPI PG INTEGRATION/E-Commerce PACKAGE/services/whatsapp-worker/node_modules/berryprotocol/dist/index.js',
-      'file:///D:/distribution/services/whatsapp-worker/node_modules/berryprotocol/dist/index.js'
+      pathToFileURL(path.resolve(rootDir, 'apps/payment-api/node_modules/berryprotocol/dist/index.js')).href
     ];
     for (const p of candidates) {
       try {
@@ -37,11 +33,7 @@ async function loadDependencies() {
     const qrCandidates = [
       'qrcode',
       pathToFileURL(path.resolve(rootDir, 'node_modules/qrcode/lib/index.js')).href,
-      pathToFileURL(path.resolve(rootDir, 'apps/payment-api/node_modules/qrcode/lib/index.js')).href,
-      'file:///D:/WA-USERAUTH DEV/node_modules/qrcode/lib/index.js',
-      'file:///D:/E-Commerce PKG/services/whatsapp-worker/node_modules/qrcode/lib/index.js',
-      'file:///D:/ECOM AND YOUPI PG INTEGRATION/E-Commerce PACKAGE/services/whatsapp-worker/node_modules/qrcode/lib/index.js',
-      'file:///D:/distribution/services/whatsapp-worker/node_modules/qrcode/lib/index.js'
+      pathToFileURL(path.resolve(rootDir, 'apps/payment-api/node_modules/qrcode/lib/index.js')).href
     ];
     for (const p of qrCandidates) {
       try {

@@ -480,7 +480,7 @@
         if (stepOtp) stepOtp.hidden = true;
         if (savedAccountsBox && getRememberedAccounts().length > 0) savedAccountsBox.hidden = false;
         if (title) title.innerText = 'Sign in to Pay';
-        if (subtitle) subtitle.innerText = 'Enter your 10-digit WhatsApp mobile number to continue';
+        if (subtitle) subtitle.innerText = 'Enter your 10-digit mobile number to continue';
         const input = document.getElementById('authMobileInput');
         if (input) {
           if (currentAuthMobile && !input.value) {
@@ -512,7 +512,7 @@
         if (stepOtp) stepOtp.hidden = false;
         if (savedAccountsBox) savedAccountsBox.hidden = true;
         if (title) title.innerText = 'Verify Mobile OTP';
-        if (subtitle) subtitle.innerText = 'Enter the 6-digit code sent to your WhatsApp number';
+        if (subtitle) subtitle.innerText = 'Enter the 6-digit code we sent you';
         const badge = document.getElementById('authOtpPhoneBadge');
         if (badge) badge.innerText = '+91 ' + currentAuthMobile;
         const otpInput = document.getElementById('authOtpInput');
@@ -587,11 +587,12 @@
         const accounts = getRememberedAccounts();
         const savedMatch = accounts.find(a => String(a.mobileNumber || '').replace(/\D/g, '').slice(-10) === clean);
 
-        if (data.exists && data.customer) {
-          // Existing customer in DB -> automatically send OTP and show OTP screen
-          currentAuthName = data.customer.name;
-          currentAuthEmail = data.customer.email;
-          btn.innerHTML = '<span>Sending WhatsApp OTP...</span>';
+        if (data.exists) {
+          // Existing customer -> send OTP. The profile (name/email) is only disclosed by the
+          // server after the OTP is verified, so the greeting stays generic until then.
+          currentAuthName = savedMatch?.name || '';
+          currentAuthEmail = savedMatch?.email || '';
+          btn.innerHTML = '<span>Sending verification code...</span>';
 
           const sendRes = await fetch(`${API_BASE}/api/v1/customer/send-otp`, {
             method: 'POST',
@@ -600,21 +601,25 @@
               mobileNumber: clean
             })
           });
-          const sendData = await sendRes.json();
+          const sendData = await sendRes.json().catch(() => ({}));
+          if (!sendRes.ok) {
+            showOptionToast(sendData.error || 'We could not send a verification code right now. Please try again.');
+            return;
+          }
           if (sendData && sendData.devOtp) lastReceivedDevOtp = sendData.devOtp;
 
           const greetingEl = document.getElementById('authOtpGreeting');
           if (greetingEl) {
-            greetingEl.innerHTML = `Welcome back, <strong>${escapeHtml(data.customer.name)}</strong>! Enter the 6-digit WhatsApp OTP:`;
+            greetingEl.textContent = sendData.message || 'Enter the 6-digit verification code we sent you:';
           }
 
           goToAuthStep('otp');
-          showOptionToast('OTP sent to your WhatsApp number!');
+          showOptionToast(sendData.message || 'Verification code sent.');
         } else if (savedMatch) {
           // Known customer in browser saved accounts -> dispatch OTP directly with saved profile
           currentAuthName = savedMatch.name || 'Customer';
           currentAuthEmail = savedMatch.email || '';
-          btn.innerHTML = '<span>Sending WhatsApp OTP...</span>';
+          btn.innerHTML = '<span>Sending verification code...</span>';
 
           const sendRes = await fetch(`${API_BASE}/api/v1/customer/send-otp`, {
             method: 'POST',
@@ -625,16 +630,20 @@
               email: currentAuthEmail
             })
           });
-          const sendData = await sendRes.json();
+          const sendData = await sendRes.json().catch(() => ({}));
+          if (!sendRes.ok) {
+            showOptionToast(sendData.error || 'We could not send a verification code right now. Please try again.');
+            return;
+          }
           if (sendData && sendData.devOtp) lastReceivedDevOtp = sendData.devOtp;
 
           const greetingEl = document.getElementById('authOtpGreeting');
           if (greetingEl) {
-            greetingEl.innerHTML = `Welcome back, <strong>${escapeHtml(currentAuthName)}</strong>! Enter the 6-digit WhatsApp OTP:`;
+            greetingEl.innerHTML = `Welcome back, <strong>${escapeHtml(currentAuthName)}</strong>! ${escapeHtml(sendData.message || 'Enter the 6-digit verification code we sent you:')}`;
           }
 
           goToAuthStep('otp');
-          showOptionToast('OTP sent to your WhatsApp number!');
+          showOptionToast(sendData.message || 'Verification code sent.');
         } else {
           // New customer -> prompt for name and email
           goToAuthStep('signup');
@@ -671,7 +680,7 @@
 
       const oldHtml = btn.innerHTML;
       btn.disabled = true;
-      btn.innerHTML = '<span>Sending WhatsApp OTP...</span>';
+      btn.innerHTML = '<span>Sending verification code...</span>';
 
       try {
         const res = await fetch(`${API_BASE}/api/v1/customer/send-otp`, {
@@ -690,15 +699,15 @@
         if (res.ok) {
           const greetingEl = document.getElementById('authOtpGreeting');
           if (greetingEl) {
-            greetingEl.innerHTML = `Hello <strong>${escapeHtml(name)}</strong>! Enter the 6-digit WhatsApp OTP:`;
+            greetingEl.innerHTML = `Hello <strong>${escapeHtml(name)}</strong>! Enter the 6-digit verification code:`;
           }
           goToAuthStep('otp');
-          showOptionToast('WhatsApp verification code sent!');
+          showOptionToast(data.message || 'Verification code sent.');
         } else {
-          showOptionToast(data.error || 'Failed to send WhatsApp OTP.');
+          showOptionToast(data.error || 'We could not send a verification code. Please try again.');
         }
       } catch (e) {
-        showOptionToast('Network error sending WhatsApp OTP.');
+        showOptionToast('Network error. Please check your connection and try again.');
       } finally {
         btn.disabled = false;
         btn.innerHTML = oldHtml;
@@ -711,7 +720,7 @@
       const otp = otpInput ? otpInput.value.trim() : '';
 
       if (!otp || otp.length < 6) {
-        showOptionToast('Please enter the 6-digit WhatsApp OTP');
+        showOptionToast('Please enter the 6-digit verification code');
         otpInput?.focus();
         return;
       }
@@ -753,7 +762,7 @@
           setGatewayAuthMode(false);
           updateCustomerDisplay(activeCustomer);
           loadState();
-          showOptionToast(`Welcome, ${activeCustomer.name}! Verified via WhatsApp.`);
+          showOptionToast(`Welcome, ${activeCustomer.name}! Verified.`);
         } else {
           showOptionToast(data.error || 'Invalid or expired OTP. Please try again.');
           otpInput.select();
@@ -768,7 +777,7 @@
 
     async function handleResendOtp() {
       if (otpCooldownSec > 0) return;
-      showOptionToast('Resending WhatsApp OTP...');
+      showOptionToast('Sending a new code...');
       try {
         const res = await fetch(`${API_BASE}/api/v1/customer/send-otp`, {
           method: 'POST',
@@ -782,7 +791,7 @@
         const data = await res.json();
         if (res.ok) {
           startOtpCooldown(30);
-          showOptionToast('Fresh OTP dispatched to your WhatsApp number!');
+          showOptionToast(data.message || 'A new code is on its way.');
           const otpInput = document.getElementById('authOtpInput');
           if (otpInput) {
             otpInput.value = '';
@@ -833,7 +842,7 @@
         selectBtn.innerHTML = '<span>Sending OTP...</span>';
       }
 
-      showOptionToast(`Sending WhatsApp OTP to +91 ${clean}...`);
+      showOptionToast(`Sending a verification code...`);
 
       try {
         const res = await fetch(`${API_BASE}/api/v1/customer/send-otp`, {
@@ -849,22 +858,22 @@
         if (data && data.devOtp) lastReceivedDevOtp = data.devOtp;
 
         if (!res.ok) {
-          showOptionToast(data.error || 'Failed to send WhatsApp OTP.');
+          showOptionToast(data.error || 'We could not send a verification code. Please try again.');
           return;
         }
 
         const greetingEl = document.getElementById('authOtpGreeting');
         if (greetingEl) {
-          greetingEl.innerHTML = `Welcome back, <strong>${escapeHtml(account.name || 'Customer')}</strong>! Enter the 6-digit WhatsApp OTP:`;
+          greetingEl.innerHTML = `Welcome back, <strong>${escapeHtml(account.name || 'Customer')}</strong>! Enter the 6-digit verification code:`;
         }
         const badge = document.getElementById('authOtpPhoneBadge');
         if (badge) badge.innerText = '+91 ' + clean;
 
         goToAuthStep('otp');
-        showOptionToast('WhatsApp verification code sent!');
+        showOptionToast(data.message || 'Verification code sent.');
       } catch (err) {
         console.error('[Select Saved Account Error]:', err);
-        showOptionToast('Network error sending WhatsApp OTP.');
+        showOptionToast('Network error. Please check your connection and try again.');
       } finally {
         if (selectBtn && oldBtnHtml) {
           selectBtn.disabled = false;

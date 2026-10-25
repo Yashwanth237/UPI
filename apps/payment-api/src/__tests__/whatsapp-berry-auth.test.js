@@ -118,7 +118,7 @@ test('WhatsApp Berry Protocol OTP Customer Auth & Merchant Configuration Suite',
     const data = await res.json();
     assert.equal(data.success, true);
     assert.equal(data.exists, true);
-    assert.equal(data.customer.name, 'Rohan Sharma');
+    assert.equal(data.customer, null, 'profile data is only returned after OTP verification');
   });
 
   let loginOtp = null;

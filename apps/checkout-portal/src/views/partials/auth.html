@@ -2,7 +2,7 @@
         <div id="preGatewayAuthView" hidden>
           <h2 class="ypg-page-title" id="authViewMainTitle">Sign in to Pay</h2>
           <div class="ypg-auth-box">
-            <div class="ypg-auth-sub-desc" id="authViewSubTitle">Enter your 10-digit WhatsApp mobile number to continue
+            <div class="ypg-auth-sub-desc" id="authViewSubTitle">Enter your 10-digit mobile number to continue
             </div>
 
             <!-- Saved Account (1-Tap Selection) -->
@@ -17,7 +17,7 @@
             <!-- STEP 1: ENTER MOBILE NUMBER -->
             <div id="authStepMobile">
               <div class="ypg-input-group">
-                <label class="ypg-input-label">WhatsApp Mobile Number</label>
+                <label class="ypg-input-label">Mobile number</label>
                 <div class="ypg-phone-input-wrap">
                   <div class="ypg-phone-prefix">
                     <span>🇮🇳</span>
@@ -31,7 +31,7 @@
               <div
                 style="font-size:12px; color:var(--ypg-text-muted); margin-bottom:14px; display:flex; align-items:center; gap:6px;">
                 <span>💬</span>
-                <span>We'll verify your mobile via WhatsApp OTP</span>
+                <span>We'll send a one-time code to verify it's you</span>
               </div>
 
               <button type="button" class="ypg-btn-auth-action" id="btnAuthContinue" onclick="handleAuthMobileSubmit()">
@@ -65,7 +65,7 @@
               </div>
 
               <button type="button" class="ypg-btn-auth-action" id="btnAuthSignup" onclick="handleAuthSignupSubmit()">
-                <span>Sign Up &amp; Send WhatsApp OTP</span> &rsaquo;
+                <span>Continue &amp; send code</span> &rsaquo;
               </button>
             </div>
 
@@ -73,7 +73,7 @@
             <div id="authStepOtp" hidden>
               <div class="ypg-auth-badge-banner" style="background:#eff6ff; border-color:#bfdbfe; color:#1e40af;">
                 <div>
-                  <span>Code sent to WhatsApp / SMS: </span>
+                  <span>Code sent to: </span>
                   <strong id="authOtpPhoneBadge">+91 </strong>
                 </div>
                 <button type="button" class="ypg-btn-link" onclick="goToAuthStep('mobile')">Edit</button>

@@ -75,7 +75,7 @@ describe('Checkout Portal Integration Tests', () => {
       assert.ok(res.text.includes('id="paymentGatewayInterface"'));
       assert.ok(res.text.includes('id="authMobileInput"'));
       assert.ok(res.text.includes('id="btnAuthContinue"'));
-      assert.ok(res.text.includes('WhatsApp Mobile Number'));
+      assert.ok(res.text.includes('Mobile number'));
       assert.ok(res.text.includes('id="authStepSignup"'));
       assert.ok(res.text.includes('id="authStepOtp"'));
 

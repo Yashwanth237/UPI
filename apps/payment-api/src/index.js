@@ -37,7 +37,8 @@ import {
   AttributionEngine,
   RecoveryEngine,
   WebhookEngine,
-  PaymentVerificationPipeline
+  PaymentVerificationPipeline,
+  createOtpDispatcherFromEnv
 } from '@youpi/core';
 import { HttpServer } from './server.js';
 import { authGuard } from './auth-guard.js';
@@ -377,6 +378,7 @@ export function createPaymentApp(customDb = null, options = {}) {
     defaultMerchant,
     checkoutBaseUrl,
     whatsappBerryService,
+    otpDispatcher: options.otpDispatcher || createOtpDispatcherFromEnv(process.env, { linkedDeviceService: whatsappBerryService }),
     webhookEngine,
     observerPollerService,
     otpCooldownMs: options.otpCooldownMs

@@ -12,11 +12,11 @@
 | `HELP_PORTAL_PORT` | `3000` | Host port for the Customer Payment Help Portal |
 | `GMAIL_OBSERVER_PORT` | `6003` | Host port for the Gmail Polling Service & OAuth Callback |
 | `SMS_OBSERVER_PORT` | `6002` | Host port for the Google Messages / SMS Web Automator |
-| `DATABASE_URL` | `postgresql://...` | PostgreSQL connection URL |
-| `USE_SQLITE_FALLBACK` | `true` | When true, uses embedded SQLite if PostgreSQL is unreachable |
+| `DATABASE_URL` | unused | **Not read by any code.** SQLite (`node:sqlite`) is the only runtime database; `packages/db/src/schema.sql` is a schema-only PostgreSQL variant kept in parity for a future adapter |
+| `USE_SQLITE_FALLBACK` | unused | **Not read by any code** (see `DATABASE_URL`) |
 | `SQLITE_DB_PATH` | `./data/youpi_pg.sqlite`| Path to local SQLite database file |
 | `ENCRYPTION_MASTER_KEY` | `64-hex chars` | 256-bit key for encrypting OAuth credentials and device keys |
-| `JWT_SECRET` | `32+ chars` | Secret key for customer and admin session tokens |
+| `JWT_SECRET` | unused | **Not read by any code.** Customer and staff sessions are opaque random tokens stored hashed in the database |
 | `PAYMENT_ACTIVE_WINDOW_MS` | `300000` | Duration of active payment slot (5 minutes = 300,000ms) |
 | `PAYMENT_PROCESSING_WINDOW_MS` | `30000` | Duration of verification slot (30 seconds = 30,000ms) |
 | `LATE_OBSERVATION_WINDOW_MS` | `1800000` | Safety window for matching late observations (30 minutes) |
@@ -30,6 +30,41 @@
 | `ANDROID_HEARTBEAT_TIMEOUT_MS` | `180000` | Inactivity window before Android device is marked DISCONNECTED |
 | `CHECKOUT_FRAME_ANCESTORS` | unset (any origin in development, `'self'` in production) | Merchant origins (comma or space separated, e.g. `https://shop.example.com`) allowed to embed `/checkout/:id`. The `youpi.js` modal is an iframe, so a store on a different origin than the checkout portal must be listed here or the browser blocks the modal. When unset, any site may frame the checkout page in development, while a production deployment (either `NODE_ENV=production` or `YOUPI_MODE=production`) fences the page to its own origin. Only bare `http(s)` origins are accepted — a path, query, embedded credential or wildcard is ignored, so the value cannot widen the CSP or inject another directive |
 | `YOUPI_ALLOW_PRIVATE_WEBHOOKS` | unset | Set to `true` to permit merchant webhook URLs on loopback/private networks. Required for self-hosted LAN targets; blocked by default as an SSRF guard |
+
+---
+
+## 1c. Customer verification codes (OTP) — channels and providers
+
+Customer sign-in codes are delivered through `OtpDispatcher` (`packages/core/src/otp-delivery.js`).
+The API reports success **only when a provider accepted the message**; otherwise `send-otp` answers
+`503 OTP_DELIVERY_UNAVAILABLE` and the code is withdrawn.
+
+| Variable | Default | Description |
+| :--- | :--- | :--- |
+| `OTP_CHANNELS` | `whatsapp,email` | Enabled channels in priority order. Unknown values are ignored |
+| `OTP_ALLOW_FALLBACK` | `true` | Try the next channel when the preferred one fails. Email fallback needs a real email on the customer record |
+| `OTP_WHATSAPP_PROVIDER` | auto | `cloud-api` (official WhatsApp Business Platform), `linked-device` (existing `berryprotocol` session, unofficial), or `none`. When unset: `cloud-api` if its variables are set, else `linked-device` if a session exists (a warning is logged in production) |
+| `WHATSAPP_CLOUD_ACCESS_TOKEN` | unset | System-user access token for the WhatsApp Cloud API. Secret |
+| `WHATSAPP_CLOUD_PHONE_NUMBER_ID` | unset | Sender phone-number ID from WhatsApp Manager |
+| `WHATSAPP_CLOUD_OTP_TEMPLATE` | unset | Name of an approved **Authentication** template with one body variable (the code) |
+| `WHATSAPP_CLOUD_TEMPLATE_LANGUAGE` | `en` | Template language code |
+| `WHATSAPP_CLOUD_API_VERSION` | `v21.0` | Graph API version |
+| `WHATSAPP_CLOUD_OTP_BUTTON` | `true` | Send the code as the copy-code button parameter too (required for authentication templates with a button) |
+| `SMTP_HOST` / `SMTP_PORT` / `SMTP_SECURE` | unset / `587` / auto | SMTP relay for email codes. Port 465 implies TLS; other ports require STARTTLS |
+| `SMTP_USER` / `SMTP_PASSWORD` | unset | SMTP credentials. Secret |
+| `OTP_EMAIL_FROM` | unset | Sender, e.g. `YouPI <no-reply@pay.example.com>`. Email is disabled until this and `SMTP_HOST` are set |
+| `OTP_BRAND_NAME` | `DEFAULT_APP_NAME` | Brand used in the email subject and text |
+| `OTP_DEV_CONSOLE` | unset | Development only: print codes to the server console instead of sending them. Also used automatically when nothing else is configured outside production. **Cannot be enabled when `NODE_ENV=production`** |
+
+Notes:
+
+* The linked-device WhatsApp mode drives a normal WhatsApp account as a "WhatsApp Web" device. It is not
+  the official Business Platform and the number may be restricted by Meta for automated traffic. Prefer
+  the Cloud API for production.
+* Codes are 6 digits, valid for 5 minutes, encrypted at rest, single-use, limited to 5 wrong attempts,
+  and rate-limited per mobile number (`OTP_RESEND_COOLDOWN_MS`, default 30 s). Codes never appear in
+  logs or audit records (the development console provider excepted).
+* `check-user` only discloses whether an account exists; name and email are returned after OTP verification.
 
 ---
 

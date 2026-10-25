@@ -9,6 +9,7 @@
   },
   "dependencies": {
     "@youpi/common": "*",
-    "@youpi/db": "*"
+    "@youpi/db": "*",
+    "nodemailer": "^10.2.1"
   }
 }
