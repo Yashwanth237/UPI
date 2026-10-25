@@ -441,6 +441,31 @@ describe('Gateway Hardening & Invariant Protection Test Suite (#23, #25, #26, #2
     assert.match(res.body.error, /must specify a valid package name in rawNotification\.package/);
   });
 
+  test('Android signed-timestamp window: accepts 5 min of age, rejects older and > 60 s in the future', async () => {
+    const deviceId = 'test-android-device-window-1';
+    const signingKey = 'fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210';
+    testDb.execute(`
+      INSERT OR REPLACE INTO android_devices (id, merchant_id, device_name, device_model, signing_key_hash, is_active, last_heartbeat_at, created_at)
+      VALUES (?, '00000000-0000-0000-0000-000000000001', 'Window Device', 'Test Model', ?, 1, datetime('now'), datetime('now'))
+    `, [deviceId, signingKey]);
+    const { generateHmac } = await import('@youpi/common');
+
+    async function sendSignedAt(offsetMs) {
+      const timestamp = String(Date.now() + offsetMs);
+      const bodyStr = JSON.stringify({ deviceId, sender: 'AX-HDFCBK', body: 'window probe', timestamp: Number(timestamp) });
+      return request('/api/v1/observers/sms', {
+        method: 'POST',
+        headers: { 'X-Device-Id': deviceId, 'X-Timestamp': timestamp, 'X-Signature': generateHmac(`${bodyStr}:${timestamp}`, signingKey) },
+        body: bodyStr
+      });
+    }
+
+    const isDriftRejection = (r) => r.status === 401 && /drift|replay/i.test(r.body.error || '');
+    assert.equal(isDriftRejection(await sendSignedAt(-3 * 60 * 1000)), false, 'an SMS forwarded 3 minutes late must reach the pipeline');
+    assert.equal(isDriftRejection(await sendSignedAt(-6 * 60 * 1000)), true, 'older than 5 minutes is rejected');
+    assert.equal(isDriftRejection(await sendSignedAt(2 * 60 * 1000)), true, 'more than 60 s in the future is rejected');
+  });
+
   test('Issue #9: findByMobile strictly matches exact numbers without unanchored LIKE injection', async () => {
     const customerRepo = apiInstance.app.context.customerRepo;
     const targetMobile = '9876500001';

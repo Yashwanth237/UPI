@@ -13,6 +13,11 @@ const __dirname = path.dirname(__filename);
 /** Upper bound on a single bank notification body accepted by the verification pipeline. */
 const MAX_OBSERVATION_TEXT_CHARS = 64 * 1024;
 
+/** Android observer request limits: signed-timestamp window and raw body size. */
+export const ANDROID_SIGNATURE_MAX_AGE_MS = 5 * 60 * 1000;
+export const ANDROID_SIGNATURE_MAX_SKEW_MS = 60 * 1000;
+const ANDROID_MAX_BODY_BYTES = 128 * 1024;
+
 /**
  * Registers observation intake routes for SMS Gateway (Android Native Observer)
  * and Automated Observers (Gmail Direct API / Web Observers).
@@ -266,9 +271,18 @@ export function registerPollerRoutes(server, ctx) {
   const handleAndroidSmsEvents = async (req, res, { requirePackage = false } = {}) => {
     const rawBodyText = await new Promise(resolve => {
       let data = '';
-      req.on('data', chunk => { data += chunk; });
+      let tooLarge = false;
+      req.on('data', chunk => {
+        if (tooLarge) return;
+        data += chunk;
+        if (data.length > ANDROID_MAX_BODY_BYTES) { tooLarge = true; data = null; }
+      });
       req.on('end', () => resolve(data));
     });
+    if (rawBodyText === null) {
+      HttpServer.json(res, 413, { error: 'Payload Too Large' });
+      return;
+    }
 
     let body = {};
     try {
@@ -302,9 +316,13 @@ export function registerPollerRoutes(server, ctx) {
     }
 
     {
+      // Same policy as device-security.js: up to 5 minutes old, at most 60 s in the future.
+      // A symmetric ±60 s window dropped genuine bank SMS whenever the phone forwarded them
+      // late (offline, retry). Replays inside the window are absorbed by the observation
+      // fingerprint and the one-attribution-per-UTR index.
       const ts = Number(timestampStr);
       const now = Date.now();
-      if (isNaN(ts) || Math.abs(now - ts) > 60000) {
+      if (isNaN(ts) || now - ts > ANDROID_SIGNATURE_MAX_AGE_MS || ts - now > ANDROID_SIGNATURE_MAX_SKEW_MS) {
         HttpServer.json(res, 401, { error: 'Timestamp drift exceeded validity window (replay protection triggered).' });
         return;
       }
@@ -330,7 +348,17 @@ export function registerPollerRoutes(server, ctx) {
     let amountPaise = body.amountPaise ? BigInt(body.amountPaise) : undefined;
     let bankRef = body.bankReferenceNumber || body.utr;
     let senderVpa = body.senderVpa;
-    let observedAt = body.observedAt ? new Date(body.observedAt) : new Date();
+    // When the bank message reached the phone. The body is HMAC-signed by the paired device, so
+    // its receive time is used rather than the arrival time here: a late-forwarded SMS must be
+    // judged against the session that was open when it was received, not the one open now.
+    let observedAt = new Date();
+    const deviceObservedAt = body.observedAt ?? body.timestamp;
+    if (deviceObservedAt !== undefined && deviceObservedAt !== null && deviceObservedAt !== '') {
+      const candidate = new Date(typeof deviceObservedAt === 'string' && /^\d+$/.test(deviceObservedAt) ? Number(deviceObservedAt) : deviceObservedAt);
+      if (!isNaN(candidate.getTime()) && candidate.getTime() <= Date.now() + ANDROID_SIGNATURE_MAX_SKEW_MS) {
+        observedAt = candidate;
+      }
+    }
 
     // Security Invariant (Issues #24, #61): the notification package must be declared and
     // must be on the allowlist. Validating it only when `rawNotification` was present let a

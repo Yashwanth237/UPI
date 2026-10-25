@@ -90,12 +90,16 @@ public class ApiClient {
         String endpoint = baseUrl + "/api/v1/observers/sms";
 
         try {
-            String tsStr = String.valueOf(timestamp > 0 ? timestamp : System.currentTimeMillis());
+            // X-Timestamp is the signing (send) time, checked by the server's replay window.
+            // The SMS receive time travels in the body: signing with it made every SMS that
+            // was forwarded late (offline, retry) fail the window and be silently dropped.
+            String tsStr = String.valueOf(System.currentTimeMillis());
+            long receivedAt = timestamp > 0 ? timestamp : Long.parseLong(tsStr);
             JSONObject json = new JSONObject();
             json.put("deviceId", deviceId);
             json.put("sender", sender != null ? sender : "UNKNOWN");
             json.put("body", body != null ? body : "");
-            json.put("timestamp", Long.parseLong(tsStr));
+            json.put("timestamp", receivedAt);
 
             String bodyString = json.toString();
             String sigPayload = bodyString + ":" + tsStr;

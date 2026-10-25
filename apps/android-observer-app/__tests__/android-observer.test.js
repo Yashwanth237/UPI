@@ -52,15 +52,20 @@ describe('Android Payment Observer Integration Tests', () => {
   });
 
   test('rejects observation with expired/drifted timestamp (Replay Protection)', async () => {
-    // Timestamp 2 minutes in the past (> 60s drift)
-    const oldTimestamp = Date.now() - 120000;
-    const res = await driver.submitObservation({
+    // Window: at most 5 minutes old, at most 60 s in the future (same as device-security.js).
+    const tooOld = await driver.submitObservation({
       amount: '200.00',
-      timestampOverride: oldTimestamp
+      timestampOverride: Date.now() - 6 * 60 * 1000
     });
+    assert.equal(tooOld.status, 401);
+    assert.ok(tooOld.body.error.includes('validity window'));
 
-    assert.equal(res.status, 401);
-    assert.ok(res.body.error.includes('validity window'));
+    const fromTheFuture = await driver.submitObservation({
+      amount: '200.00',
+      timestampOverride: Date.now() + 2 * 60 * 1000
+    });
+    assert.equal(fromTheFuture.status, 401);
+    assert.ok(fromTheFuture.body.error.includes('validity window'));
   });
 
   test('submits valid HMAC-signed observation and confirms payment in Payment API', async () => {
