@@ -48,7 +48,11 @@ export class PaymentObserverClient {
 
     if (!res.ok) {
       const errBody = await res.text();
-      throw new Error(`Observer submit failed [HTTP ${res.status}]: ${errBody}`);
+      const err = new Error(`Observer submit failed [HTTP ${res.status}]: ${errBody}`);
+      // Callers need the verdict (e.g. REJECTED vs UNRESOLVED) to decide whether to retry.
+      err.status = res.status;
+      try { err.body = JSON.parse(errBody); } catch { err.body = null; }
+      throw err;
     }
 
     return await res.json();

@@ -31,5 +31,5 @@ export function startGmailObserver(port = null, options = {}) {
 
 // Auto-run if executed directly as main script
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
-  startGmailObserver();
+  startGmailObserver().then(({ poller }) => poller.resumeIfConnected()).catch(() => {});
 }

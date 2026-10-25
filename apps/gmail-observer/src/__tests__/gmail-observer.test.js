@@ -5,6 +5,7 @@ import { Database } from '@youpi/db';
 import { startServer as startPaymentApi } from '../../../payment-api/src/index.js';
 import { startGmailObserver } from '../index.js';
 import { BankEmailParser } from '../parser.js';
+import { GmailPoller, extractBodyFromGmailPayload, isFinalSubmissionFailure, MAX_RAW_TEXT_CHARS, UNRESOLVED_RETRY_WINDOW_MS } from '../gmail-poller.js';
 import { PaymentStatus, createOAuthState } from '@youpi/common';
 import { TEST_OBSERVER_TOKEN } from '../../../../scripts/test-support.js';
 
@@ -154,5 +155,77 @@ describe('Gmail Payment Observer Integration Tests', () => {
       const updated = apiInstance.app.context.sessionRepo.findById(session.id);
       assert.equal(updated.status, PaymentStatus.SUCCESS);
     });
+  });
+});
+
+describe('Gmail poller message handling', () => {
+  const b64 = (s) => Buffer.from(s, 'utf8').toString('base64url');
+
+  test('a single-part HTML alert is stripped to text (no raw markup, under the scan limit)', () => {
+    const html = `<html><head><style>${'.x{color:red}'.repeat(2000)}</style></head><body><p>Rs.&nbsp;499.00 credited to a/c XX1234</p><p>UPI Ref 123456789012</p></body></html>`;
+    const text = extractBodyFromGmailPayload({ mimeType: 'text/html', body: { data: b64(html) } });
+    assert.ok(!text.includes('<'), 'markup must be removed');
+    assert.ok(!text.includes('color:red'), 'style blocks must be removed');
+    assert.match(text, /Rs\. 499\.00 credited/);
+    assert.ok(text.length < MAX_RAW_TEXT_CHARS);
+  });
+
+  test('text/plain is found inside nested multipart and preferred over HTML', () => {
+    const payload = {
+      mimeType: 'multipart/mixed',
+      parts: [{
+        mimeType: 'multipart/alternative',
+        parts: [
+          { mimeType: 'text/html', body: { data: b64('<b>html</b>') } },
+          { mimeType: 'text/plain', body: { data: b64('plain credit alert') } }
+        ]
+      }]
+    };
+    assert.equal(extractBodyFromGmailPayload(payload), 'plain credit alert');
+  });
+
+  test('REJECTED verdicts are final; UNRESOLVED retries only while recent; 5xx/network always retry', () => {
+    const now = Date.now();
+    const rejected = Object.assign(new Error('x'), { status: 400, body: { status: 'REJECTED', reason: 'MISSING_CREDIT_INDICATOR' } });
+    const unresolved = Object.assign(new Error('x'), { status: 400, body: { status: 'UNRESOLVED', reason: 'NO_ACTIVE_SESSION' } });
+    assert.equal(isFinalSubmissionFailure(rejected, now, now), true);
+    assert.equal(isFinalSubmissionFailure(unresolved, now - 60_000, now), false);
+    assert.equal(isFinalSubmissionFailure(unresolved, now - UNRESOLVED_RETRY_WINDOW_MS - 1, now), true);
+    assert.equal(isFinalSubmissionFailure(Object.assign(new Error('x'), { status: 503 }), now, now), false);
+    assert.equal(isFinalSubmissionFailure(new Error('ECONNREFUSED'), now, now), false);
+  });
+
+  /** Stub payment API serving /api/v1/admin/gmail/credentials with the given refresh token. */
+  async function credentialStub(refreshToken) {
+    const srv = http.createServer((req, res) => {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ clientId: 'cid.apps.googleusercontent.com', clientSecret: 'sec', refreshToken, connectedEmail: 'owner@example.com' }));
+    });
+    await new Promise(r => srv.listen(0, '127.0.0.1', r));
+    return { srv, base: `http://127.0.0.1:${srv.address().port}` };
+  }
+
+  test('after a restart the poller resumes when a Google account is still linked', async () => {
+    const { srv, base } = await credentialStub('stored-refresh-token');
+    const poller = new GmailPoller({ apiBaseUrl: base, pollIntervalMs: 60_000 });
+    poller.pollCycle = async () => {}; // no Google calls in tests
+    try {
+      assert.equal(await poller.resumeIfConnected({ attempts: 1 }), true);
+      assert.equal(poller.isRunning, true);
+    } finally {
+      poller.stop();
+      srv.close();
+    }
+  });
+
+  test('a disconnected account (no refresh token) stays stopped', async () => {
+    const { srv, base } = await credentialStub('');
+    const poller = new GmailPoller({ apiBaseUrl: base, pollIntervalMs: 60_000 });
+    try {
+      assert.equal(await poller.resumeIfConnected({ attempts: 1 }), false);
+      assert.equal(poller.isRunning, false);
+    } finally {
+      srv.close();
+    }
   });
 });

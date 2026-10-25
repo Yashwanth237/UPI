@@ -2,38 +2,74 @@ import { PaymentObserverClient } from '@youpi/observer-sdk';
 import { getObserverToken } from '@youpi/common';
 import { BankEmailParser } from './parser.js';
 
-function extractBodyFromGmailPayload(payload) {
-  if (!payload) return '';
-  if (payload.body?.data) {
-    try {
-      return Buffer.from(payload.body.data, 'base64url').toString('utf8');
-    } catch {}
+/** Stays under the verification pipeline's 8192-char scan limit (PAYLOAD_TOO_LARGE). */
+export const MAX_RAW_TEXT_CHARS = 8000;
+
+/** How long a NO_ACTIVE_SESSION (UNRESOLVED) email is retried: the payment window plus slack. */
+export const UNRESOLVED_RETRY_WINDOW_MS = 10 * 60 * 1000;
+
+const decode = (data) => {
+  try { return Buffer.from(data, 'base64url').toString('utf8'); } catch { return ''; }
+};
+
+/** HTML bank alerts → plain text: drops style/script/head, tags and common entities, collapses whitespace. */
+export function htmlToText(html) {
+  return String(html)
+    .replace(/<(style|script|head)\b[^>]*>[\s\S]*?<\/\1>/gi, ' ')
+    .replace(/<br\s*\/?>|<\/(p|div|tr|li|h[1-6])>/gi, '\n')
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/&nbsp;/gi, ' ')
+    .replace(/&amp;/gi, '&')
+    .replace(/&lt;/gi, '<')
+    .replace(/&gt;/gi, '>')
+    .replace(/&quot;/gi, '"')
+    .replace(/&#39;|&apos;/gi, "'")
+    .replace(/&#8377;|&#x20b9;/gi, '₹')
+    .replace(/[ \t\f\v ]+/g, ' ')
+    .replace(/\s*\n\s*/g, '\n')
+    .trim();
+}
+
+/** Finds the first part of a MIME type anywhere in the (possibly nested) multipart tree. */
+function findPart(payload, mimeType) {
+  if (!payload) return null;
+  if (payload.mimeType === mimeType && payload.body?.data) return payload;
+  for (const part of payload.parts || []) {
+    const hit = findPart(part, mimeType);
+    if (hit) return hit;
   }
-  if (Array.isArray(payload.parts)) {
-    for (const part of payload.parts) {
-      if (part.mimeType === 'text/plain' && part.body?.data) {
-        try {
-          return Buffer.from(part.body.data, 'base64url').toString('utf8');
-        } catch {}
-      }
-    }
-    for (const part of payload.parts) {
-      if (part.mimeType === 'text/html' && part.body?.data) {
-        try {
-          const html = Buffer.from(part.body.data, 'base64url').toString('utf8');
-          return html.replace(/<[^>]+>/g, ' ');
-        } catch {}
-      }
-    }
-    for (const part of payload.parts) {
-      if (part.body?.data) {
-        try {
-          return Buffer.from(part.body.data, 'base64url').toString('utf8');
-        } catch {}
-      }
-    }
+  return null;
+}
+
+/** Plain-text body of a Gmail API message payload, preferring text/plain over (stripped) text/html. */
+export function extractBodyFromGmailPayload(payload) {
+  if (!payload) return '';
+  const plain = findPart(payload, 'text/plain');
+  if (plain) return decode(plain.body.data).trim();
+  const html = findPart(payload, 'text/html');
+  if (html) return htmlToText(decode(html.body.data));
+  if (payload.body?.data) return decode(payload.body.data).trim();
+  for (const part of payload.parts || []) {
+    const text = extractBodyFromGmailPayload(part);
+    if (text) return text;
   }
   return '';
+}
+
+/**
+ * Whether a message that failed submission should be skipped from now on.
+ * REJECTED is the pipeline's final verdict (not a credit alert, unknown sender, ...).
+ * UNRESOLVED (no matching session yet) is retried while the email is recent, since the alert
+ * can land moments before the session is active. Network errors and 5xx are always retried.
+ * @param {any} err
+ * @param {number} emailTimeMs
+ * @param {number} [nowMs]
+ */
+export function isFinalSubmissionFailure(err, emailTimeMs, nowMs = Date.now()) {
+  const status = Number(err?.status);
+  if (!(status >= 400 && status < 500)) return false;
+  if (err?.body?.status === 'UNRESOLVED') return nowMs - emailTimeMs > UNRESOLVED_RETRY_WINDOW_MS;
+  return true;
 }
 
 export class GmailPoller {
@@ -83,6 +119,29 @@ export class GmailPoller {
         }
       }
     } catch {}
+  }
+
+  /**
+   * Restarts polling after a service restart when a Google account is still linked (a stored
+   * refresh token). Before this, only the OAuth callback started the poller, so any restart
+   * silently stopped Gmail payment confirmation. Retries while the payment API is still booting.
+   * Disconnect clears the refresh token, so a deliberately unlinked account stays stopped.
+   * @param {{ attempts?: number, delayMs?: number }} [opts]
+   * @returns {Promise<boolean>} true when polling was resumed
+   */
+  async resumeIfConnected({ attempts = 10, delayMs = 3000 } = {}) {
+    for (let i = 0; i < attempts; i++) {
+      if (this.isRunning) return true;
+      await this.fetchCredentialsFromPaymentApi();
+      if (this.credentials?.refreshToken) {
+        const masked = String(this.credentials.connectedEmail || 'unknown').replace(/^(.{2}).*(@.*)$/, '$1***$2');
+        console.log(`[Gmail Observer] Resuming polling for linked account (${masked}).`);
+        this.start();
+        return true;
+      }
+      if (i < attempts - 1) await new Promise(r => { const t = setTimeout(r, delayMs); if (t.unref) t.unref(); });
+    }
+    return false;
   }
 
   async getAccessToken() {
@@ -154,7 +213,8 @@ export class GmailPoller {
     } catch {}
 
     const sender = email.from || email.sender || 'alerts@retail.bank.in';
-    const rawContent = `${email.subject || ''}\n${email.body || ''}`.trim();
+    // Credit details sit at the top of bank alerts; long footers must not push it over the limit.
+    const rawContent = `${email.subject || ''}\n${email.body || ''}`.trim().slice(0, MAX_RAW_TEXT_CHARS);
 
     try {
       const result = await this.observerClient.submitObservation({
@@ -181,7 +241,10 @@ export class GmailPoller {
       this.observedCount++;
       return result;
     } catch (err) {
-      console.error('[Gmail Observer] Submission failed:', err.message);
+      // Final rejections are routine (most matching emails are not credit alerts); the poll loop logs those.
+      if (!(Number(err?.status) >= 400 && Number(err?.status) < 500)) {
+        console.error('[Gmail Observer] Submission failed:', err.message);
+      }
       throw err;
     }
   }
@@ -208,6 +271,15 @@ export class GmailPoller {
     this.isRunning = false;
     this._isPolling = false;
     console.log('[Gmail Observer] Poller stopped.');
+  }
+
+  /** Remembers a settled message id (bounded, oldest evicted first). */
+  markProcessed(id) {
+    this.processedMessageIds.add(id);
+    if (this.processedMessageIds.size > 500) {
+      const firstKey = this.processedMessageIds.values().next().value;
+      this.processedMessageIds.delete(firstKey);
+    }
   }
 
   async pollCycle() {
@@ -238,6 +310,8 @@ export class GmailPoller {
       for (const m of messages) {
         if (this.processedMessageIds.has(m.id)) continue;
 
+        /** @type {Date | null} */
+        let emailDate = null;
         try {
           const msgRes = await fetch(`https://gmail.googleapis.com/gmail/v1/users/me/messages/${m.id}?format=full`, {
             headers: { 'Authorization': `Bearer ${accessToken}` },
@@ -251,6 +325,7 @@ export class GmailPoller {
           const subject = headers.find(h => h.name.toLowerCase() === 'subject')?.value || '';
           const dateStr = headers.find(h => h.name.toLowerCase() === 'date')?.value || '';
           const body = extractBodyFromGmailPayload(msgData.payload) || msgData.snippet || '';
+          emailDate = dateStr ? new Date(dateStr) : new Date(Number(msgData.internalDate || Date.now()));
 
           await this.processEmail({
             id: m.id,
@@ -258,16 +333,20 @@ export class GmailPoller {
             subject,
             body,
             from,
-            date: dateStr ? new Date(dateStr) : new Date(Number(msgData.internalDate || Date.now()))
+            date: emailDate
           });
 
-          this.processedMessageIds.add(m.id);
-          if (this.processedMessageIds.size > 500) {
-            const firstKey = this.processedMessageIds.values().next().value;
-            this.processedMessageIds.delete(firstKey);
-          }
+          this.markProcessed(m.id);
         } catch (msgErr) {
-          console.warn(`[Gmail Observer] Error fetching message ${m.id}:`, msgErr.message);
+          const emailTimeMs = emailDate && !Number.isNaN(emailDate.getTime()) ? emailDate.getTime() : Date.now();
+          if (isFinalSubmissionFailure(msgErr, emailTimeMs)) {
+            // Settled by the pipeline: skip it from now on instead of re-fetching every poll.
+            this.markProcessed(m.id);
+            const verdict = msgErr.body ? `${msgErr.body.status || 'REJECTED'} (${msgErr.body.reason || 'no reason'})` : `HTTP ${msgErr.status}`;
+            console.log(`[Gmail Observer] Skipped message ${m.id}: ${verdict}`);
+          } else {
+            console.warn(`[Gmail Observer] Will retry message ${m.id}:`, msgErr.message);
+          }
         }
       }
     } catch (err) {
