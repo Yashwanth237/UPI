@@ -261,9 +261,13 @@
     const nativeFetch = window.fetch.bind(window);
     let pending = null;
 
-    const read = () => { try { return sessionStorage.getItem(KEY) || ''; } catch (e) { return ''; } };
-    const write = (t) => { try { sessionStorage.setItem(KEY, t); } catch (e) {} };
-    const clear = () => { try { sessionStorage.removeItem(KEY); } catch (e) {} };
+    // In-memory copy is the source of truth; sessionStorage only survives reloads. Embedded
+    // webviews (e.g. VS Code Simple Browser) can block storage, which used to drop the token
+    // and re-prompt forever with "That token was rejected".
+    let memToken = '';
+    const read = () => { if (memToken) return memToken; try { return (memToken = sessionStorage.getItem(KEY) || ''); } catch (e) { return ''; } };
+    const write = (t) => { memToken = t; try { sessionStorage.setItem(KEY, t); } catch (e) {} };
+    const clear = () => { memToken = ''; try { sessionStorage.removeItem(KEY); } catch (e) {} };
 
     function isProtected(url) {
       return /\/api\/services/.test(url);
