@@ -91,6 +91,7 @@ describe('Customer OTP delivery is honest and provider-independent', () => {
       assert.equal(res.body.destination, 'ra***@example.com');
       assert.equal(res.body.fallbackUsed, true);
       assert.match(res.body.message, /email/);
+      assert.equal(res.body.delivered, true);
       assert.equal(email.sent.length, 1);
     });
 
@@ -100,6 +101,22 @@ describe('Customer OTP delivery is honest and provider-independent', () => {
       assert.equal(ok.status, 200);
       const replay = await post(ctx.base, '/api/v1/customer/verify-otp', { mobileNumber: '9833344455', otp: code });
       assert.notEqual(replay.status, 200, 'replaying a used code must fail');
+    });
+  });
+
+  describe('when only the development console can take the code', () => {
+    let ctx;
+    before(async () => {
+      const devConsole = { ...scriptedProvider('dev'), name: 'dev-console', official: false };
+      ctx = await startWith(new OtpDispatcher({ providers: [scriptedProvider('whatsapp', { fail: true }), devConsole], channels: ['whatsapp', 'dev'], logger: silentLogger }));
+    });
+    after(() => { ctx.app.destroy(); ctx.server.close(); });
+
+    test('the response reports delivered: false so the checkout does not claim "Code sent"', async () => {
+      const res = await post(ctx.base, '/api/v1/customer/send-otp', { mobileNumber: '9844455566', name: 'Dev Person', email: 'dev@example.com', isNewUser: true });
+      assert.equal(res.status, 200);
+      assert.equal(res.body.delivered, false);
+      assert.match(res.body.message, /not sent to a real device/);
     });
   });
 });

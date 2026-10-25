@@ -611,6 +611,7 @@
             return;
           }
           if (sendData && sendData.devOtp) lastReceivedDevOtp = sendData.devOtp;
+          applyOtpDeliveryState(sendData);
 
           const greetingEl = document.getElementById('authOtpGreeting');
           if (greetingEl) {
@@ -640,6 +641,7 @@
             return;
           }
           if (sendData && sendData.devOtp) lastReceivedDevOtp = sendData.devOtp;
+          applyOtpDeliveryState(sendData);
 
           const greetingEl = document.getElementById('authOtpGreeting');
           if (greetingEl) {
@@ -701,6 +703,7 @@
         if (data && data.devOtp) lastReceivedDevOtp = data.devOtp;
 
         if (res.ok) {
+          applyOtpDeliveryState(data);
           const greetingEl = document.getElementById('authOtpGreeting');
           if (greetingEl) {
             greetingEl.innerHTML = `Hello <strong>${escapeHtml(name)}</strong>! Enter the 6-digit verification code:`;
@@ -779,6 +782,15 @@
       }
     }
 
+    /** Keeps the OTP step honest: never say "Code sent to" when the server reports no real delivery. */
+    function applyOtpDeliveryState(data) {
+      const notDelivered = Boolean(data) && data.delivered === false;
+      const label = document.getElementById('authOtpSentLabel');
+      if (label) label.textContent = notDelivered ? 'Not delivered to: ' : 'Code sent to: ';
+      const notice = document.getElementById('authOtpNotDelivered');
+      if (notice) notice.hidden = !notDelivered;
+    }
+
     async function handleResendOtp() {
       if (otpCooldownSec > 0) return;
       showOptionToast('Sending a new code...');
@@ -794,6 +806,7 @@
         });
         const data = await res.json();
         if (res.ok) {
+          applyOtpDeliveryState(data);
           startOtpCooldown(30);
           showOptionToast(data.message || 'A new code is on its way.');
           const otpInput = document.getElementById('authOtpInput');
@@ -865,6 +878,7 @@
           showOptionToast(data.error || 'We could not send a verification code. Please try again.');
           return;
         }
+        applyOtpDeliveryState(data);
 
         const greetingEl = document.getElementById('authOtpGreeting');
         if (greetingEl) {

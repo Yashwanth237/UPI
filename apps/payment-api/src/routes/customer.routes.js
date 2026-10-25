@@ -265,6 +265,8 @@ export function registerCustomerRoutes(server, ctx) {
       mobileNumber: cleanMobile,
       channel: delivery.channel,
       destination: delivery.destination,
+      // false when only the development console "sent" it, so the checkout must not claim delivery
+      delivered: !delivery.simulated,
       fallbackUsed: delivery.attempts.length > 0,
       expiresInSeconds: 300,
       // Returning the OTP lets anyone log in as any number: only on explicit opt-in, never in production.

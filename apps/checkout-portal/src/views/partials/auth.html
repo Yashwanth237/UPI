@@ -73,10 +73,14 @@
             <div id="authStepOtp" hidden>
               <div class="ypg-auth-badge-banner" style="background:#eff6ff; border-color:#bfdbfe; color:#1e40af;">
                 <div>
-                  <span>Code sent to: </span>
+                  <span id="authOtpSentLabel">Code sent to: </span>
                   <strong id="authOtpPhoneBadge">+91 </strong>
                 </div>
                 <button type="button" class="ypg-btn-link" onclick="goToAuthStep('mobile')">Edit</button>
+              </div>
+              <div id="authOtpNotDelivered" role="status" hidden
+                style="background:#fffbeb; border:1px solid #fcd34d; color:#92400e; border-radius:10px; padding:10px 12px; font-size:12.5px; margin-bottom:10px;">
+                Development mode: no code was sent to this phone because no delivery channel (WhatsApp or email) is connected. The code is printed in the payment-api log (Control Center &rsaquo; Live logs).
               </div>
 
               <div id="authOtpGreeting"
