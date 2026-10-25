@@ -1,5 +1,6 @@
 import http from 'node:http';
 import { hasBearer, getObserverToken, getAdminToken } from '@youpi/common';
+import { serveServiceLanding } from '@youpi/ui';
 import { SmsObserverService } from './sms-service.js';
 import { GoogleMessagesAutomator } from './browser-automator.js';
 
@@ -44,6 +45,12 @@ export class SmsObserverServer {
         }));
         return;
       }
+
+      // GET / — human landing page (this service has no UI; manage it from Merchant Admin)
+      if (serveServiceLanding(pathname, req, res, {
+        name: 'SMS Observer',
+        description: 'Backend service that ingests bank credit SMS alerts (Android app / Google Messages) to confirm UPI payments. It has no UI of its own — connect and monitor it from Merchant Admin.'
+      })) return;
 
       // GET /api/browser/status
       if (pathname === '/api/browser/status') {

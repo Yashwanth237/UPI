@@ -88,6 +88,13 @@ describe('Payment API End-to-End HTTP Integration Tests', () => {
     assert.ok(res.body.recoveryStats);
   });
 
+  test('GET / serves an HTML landing page instead of a route-not-found error', async () => {
+    const res = await request('/');
+    assert.equal(res.status, 200);
+    assert.match(res.headers['content-type'], /text\/html/);
+    assert.ok(res.body.includes('Payment Core API'));
+  });
+
   test('Complete payment lifecycle: creation, queue, payment-done, observation attribution & promotion', async () => {
     // 1. Create first payment session (Customer A -> ₹200)
     const payA = await request('/api/v1/payments', {

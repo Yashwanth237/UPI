@@ -62,6 +62,14 @@ describe('Checkout Portal Integration Tests', () => {
       assert.equal(json.service, 'checkout-portal');
     });
 
+    test('GET / serves an HTML landing page instead of "Checkout Page Not Found"', async () => {
+      const res = await get('/');
+      assert.equal(res.status, 200);
+      assert.match(res.headers['content-type'], /text\/html/);
+      assert.ok(res.text.includes('Checkout Portal'));
+      assert.ok(res.headers['content-security-policy'].includes("frame-ancestors 'none'"));
+    });
+
     test('GET /checkout/:id renders responsive HTML with injected payment ID', async () => {
       const testPaymentId = 'pay_test_uuid_12345';
       const res = await get(`/checkout/${testPaymentId}`);

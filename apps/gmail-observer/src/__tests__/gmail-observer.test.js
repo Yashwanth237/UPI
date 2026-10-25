@@ -92,6 +92,13 @@ describe('Gmail Payment Observer Integration Tests', () => {
       assert.equal(json.service, 'gmail-observer');
     });
 
+    test('GET / serves an HTML landing page instead of "Route Not Found"', async () => {
+      const res = await get('/');
+      assert.equal(res.status, 200);
+      assert.ok(res.text.includes('Gmail Observer'));
+      assert.ok(!res.text.includes('Route Not Found'));
+    });
+
     test('GET /oauth/url requires a token and returns a Google OAuth URL carrying a signed state', async () => {
       assert.equal((await get('/oauth/url')).status, 401);
 

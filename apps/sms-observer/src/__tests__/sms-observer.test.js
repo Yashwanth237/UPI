@@ -97,6 +97,13 @@ describe('Google Messages / SMS Payment Observer Integration Tests', () => {
       assert.equal(json.service, 'sms-observer');
     });
 
+    test('GET / serves an HTML landing page instead of "Route Not Found"', async () => {
+      const res = await get('/');
+      assert.equal(res.status, 200);
+      assert.ok(res.text.includes('SMS Observer'));
+      assert.ok(!res.text.includes('Route Not Found'));
+    });
+
     test('End-to-End: processing bank SMS confirms active payment session in Payment API', async () => {
       // 1. Create a payment in Payment API for ₹499
       const session = apiInstance.app.context.sessionRepo.create({

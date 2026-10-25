@@ -1,5 +1,6 @@
 import http from 'node:http';
 import { hasBearer, getObserverToken, getAdminToken, createOAuthState, consumeOAuthState, resolveGmailRedirectUri } from '@youpi/common';
+import { serveServiceLanding } from '@youpi/ui';
 import { GmailPoller } from './gmail-poller.js';
 import { GmailBrowserAutomator } from './browser-automator.js';
 
@@ -44,6 +45,12 @@ export class GmailObserverServer {
         }));
         return;
       }
+
+      // GET / — human landing page (this service has no UI; manage it from Merchant Admin)
+      if (serveServiceLanding(pathname, req, res, {
+        name: 'Gmail Observer',
+        description: 'Backend service that reads bank transaction alert emails from Gmail to confirm UPI payments. It has no UI of its own — link Gmail and monitor it from Merchant Admin.'
+      })) return;
 
       // POST /stop
       // This service is published publicly (Google must reach /oauth/callback), so stopping the

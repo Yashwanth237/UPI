@@ -3,6 +3,7 @@ import { EventEmitter } from 'node:events';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { PaymentStatus } from '@youpi/common';
+import { serveServiceLanding } from '@youpi/ui';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -351,6 +352,14 @@ export function createPaymentApp(customDb = null, options = {}) {
   };
   server.get('/health', healthHandler);
   server.get('/api/v1/health', healthHandler);
+
+  // Human landing page at "/" so opening the port in a browser does not look like a crash
+  server.get('/', (req, res) => {
+    serveServiceLanding('/', req, res, {
+      name: 'Payment Core API',
+      description: 'REST API behind the gateway: payment sessions, verification state machine and webhooks under /api/v1. It is called by the checkout, admin and merchant servers, not opened in a browser.'
+    });
+  });
 
   const pipeline = new PaymentVerificationPipeline({
     db,

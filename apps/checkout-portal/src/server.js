@@ -4,7 +4,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { generateQrSvg } from '@youpi/core';
 import { getInternalServiceToken } from '@youpi/common';
-import { serveUiAsset } from '@youpi/ui';
+import { serveUiAsset, serveServiceLanding } from '@youpi/ui';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -319,6 +319,12 @@ export class CheckoutServer {
         res.end(JSON.stringify({ status: 'UP', service: 'checkout-portal' }));
         return;
       }
+
+      // GET / — human landing page; customers only ever reach /checkout/:id via a merchant
+      if (serveServiceLanding(pathname, req, res, {
+        name: 'Checkout Portal',
+        description: 'Serves youpi.js and the customer checkout at /checkout/:id. Customers reach it through a merchant’s Pay button, so there is nothing to show at the root — try the Demo Store to start a payment.'
+      })) return;
 
       // Keep-alive ping for cron / uptime monitors
       if (pathname === '/ping') {

@@ -12,6 +12,7 @@
     "@youpi/common": "*",
     "@youpi/core": "*",
     "@youpi/db": "*",
+    "@youpi/ui": "*",
     "berryprotocol": "^0.1.10",
     "qrcode": "^1.5.4"
   }
