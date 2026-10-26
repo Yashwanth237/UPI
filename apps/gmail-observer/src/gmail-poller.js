@@ -97,6 +97,8 @@ export class GmailPoller {
     this.cachedAccessToken = null;
     this.tokenExpiresAt = 0;
     this.processedMessageIds = new Set();
+    this.consecutiveFailures = 0;
+    this.failingSince = 0;
   }
 
   setCredentials(creds) {
@@ -170,7 +172,11 @@ export class GmailPoller {
       });
 
       if (!tokenRes.ok) {
-        return null;
+        // Used to return null silently, which stopped polling with nothing in the logs.
+        const body = await tokenRes.json().catch(() => ({}));
+        const err = new Error(`Google rejected the stored Gmail authorization (HTTP ${tokenRes.status}${body.error ? `: ${body.error}` : ''}). Re-authorize Gmail in Merchant Admin.`);
+        err.permanent = tokenRes.status === 400 || tokenRes.status === 401;
+        throw err;
       }
 
       const tokenData = await tokenRes.json();
@@ -178,9 +184,31 @@ export class GmailPoller {
       this.tokenExpiresAt = Date.now() + ((tokenData.expires_in || 3500) - 120) * 1000;
       return this.cachedAccessToken;
     } catch (err) {
-      console.warn('[Gmail Observer] Failed to refresh Google access token:', err.message);
-      return null;
+      // Network errors and rejections propagate to pollCycle, which reports outages once.
+      throw new Error(`Failed to refresh Google access token: ${err.message}`, { cause: err });
     }
+  }
+
+  /** Logs the first failure of an outage, an error once it lasts ~1 min, and nothing in between. */
+  noteFailure(err) {
+    this.consecutiveFailures = (this.consecutiveFailures || 0) + 1;
+    const permanent = Boolean(err?.permanent || err?.cause?.permanent);
+    if (this.consecutiveFailures === 1) {
+      this.failingSince = Date.now();
+      if (permanent) console.error(`[Gmail Observer] ${err.message}`);
+      else console.warn(`[Gmail Observer] Poll failed, will keep retrying: ${err.message}`);
+    } else if (this.consecutiveFailures === Math.max(2, Math.ceil(60000 / this.pollIntervalMs))) {
+      const secs = Math.round((Date.now() - this.failingSince) / 1000);
+      console.error(`[Gmail Observer] Gmail unreachable for ${secs}s (${this.consecutiveFailures} polls): ${err.message}`);
+    }
+  }
+
+  noteSuccess() {
+    if (this.consecutiveFailures > 0) {
+      const secs = Math.round((Date.now() - this.failingSince) / 1000);
+      console.log(`[Gmail Observer] Polling recovered after ${this.consecutiveFailures} failed poll(s) (${secs}s).`);
+    }
+    this.consecutiveFailures = 0;
   }
 
   async resolveActiveReceivingAccount() {
@@ -300,9 +328,12 @@ export class GmailPoller {
       if (!listRes.ok) {
         if (listRes.status === 401) {
           this.cachedAccessToken = null;
+          return; // expired access token; the next poll refreshes it
         }
+        this.noteFailure(new Error(`Gmail API list request failed (HTTP ${listRes.status}).`));
         return;
       }
+      this.noteSuccess();
 
       const listData = await listRes.json();
       const messages = listData.messages || [];
@@ -350,7 +381,7 @@ export class GmailPoller {
         }
       }
     } catch (err) {
-      console.warn('[Gmail Observer] pollCycle error:', err.message);
+      this.noteFailure(err);
     } finally {
       this._isPolling = false;
     }

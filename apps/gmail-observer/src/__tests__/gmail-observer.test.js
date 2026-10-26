@@ -218,6 +218,37 @@ describe('Gmail poller message handling', () => {
     }
   });
 
+  test('a network blip logs one warning and one recovery line, not one error per poll', () => {
+    const poller = new GmailPoller({ pollIntervalMs: 5000 });
+    const logged = { warn: [], error: [], log: [] };
+    const orig = { warn: console.warn, error: console.error, log: console.log };
+    console.warn = (m) => logged.warn.push(m); console.error = (m) => logged.error.push(m); console.log = (m) => logged.log.push(m);
+    try {
+      for (let i = 0; i < 5; i++) poller.noteFailure(new Error('fetch failed'));
+      poller.noteSuccess();
+    } finally { Object.assign(console, orig); }
+    assert.equal(logged.warn.length, 1);
+    assert.equal(logged.error.length, 0, 'a 25s blip is not an error');
+    assert.match(logged.log[0], /recovered after 5 failed poll/);
+  });
+
+  test('an outage of about a minute is escalated to one error; a rejected token is an error at once', () => {
+    const poller = new GmailPoller({ pollIntervalMs: 5000 });
+    const errors = [];
+    const orig = { warn: console.warn, error: console.error };
+    console.warn = () => {}; console.error = (m) => errors.push(m);
+    try {
+      for (let i = 0; i < 20; i++) poller.noteFailure(new Error('fetch failed'));
+      assert.equal(errors.length, 1);
+      assert.match(errors[0], /Gmail unreachable/);
+
+      const fresh = new GmailPoller({ pollIntervalMs: 5000 });
+      fresh.noteFailure(Object.assign(new Error('Google rejected the stored Gmail authorization (HTTP 400: invalid_grant).'), { permanent: true }));
+      assert.equal(errors.length, 2);
+      assert.match(errors[1], /invalid_grant/);
+    } finally { Object.assign(console, orig); }
+  });
+
   test('a disconnected account (no refresh token) stays stopped', async () => {
     const { srv, base } = await credentialStub('');
     const poller = new GmailPoller({ apiBaseUrl: base, pollIntervalMs: 60_000 });
