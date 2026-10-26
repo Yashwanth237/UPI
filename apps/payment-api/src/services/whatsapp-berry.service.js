@@ -8,6 +8,9 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const rootDir = path.resolve(__dirname, '../../../..');
 
+/** How long a send waits for a dropped linked session to come back (3s auto-reconnect + handshake). */
+const RECONNECT_WAIT_MS = 10000;
+
 let BerryProtocolClass = null;
 let qrcodeLib = null;
 
@@ -662,16 +665,14 @@ export class WhatsAppBerryService extends EventEmitter {
     const hasCreds = fs.existsSync(path.join(this.sessionPath, this.sessionId, 'creds.json')) ||
                      fs.existsSync(path.join(this.sessionPath, 'creds.json'));
 
-    if ((!this.client || this.status !== 'CONNECTED') && hasCreds && !this.isInitializing) {
-      console.log(`[WhatsAppBerryService] Reconnecting saved WhatsApp session before message dispatch...`);
-      try {
-        await this.initialize();
-        let attempts = 0;
-        while (this.status !== 'CONNECTED' && attempts < 10) {
-          await new Promise(r => setTimeout(r, 500));
-          attempts++;
-        }
-      } catch (e) {}
+    if ((!this.client || this.status !== 'CONNECTED') && hasCreds) {
+      // A linked session that dropped (e.g. a short network blip) is usually already
+      // auto-reconnecting; wait for it instead of failing the OTP straight away.
+      if (!this.isInitializing) {
+        console.log(`[WhatsAppBerryService] Reconnecting saved WhatsApp session before message dispatch...`);
+        this.initialize().catch(() => {});
+      }
+      await this.waitForConnected(RECONNECT_WAIT_MS);
     }
 
     if (!this.client || this.status !== 'CONNECTED') {
@@ -690,37 +691,51 @@ export class WhatsAppBerryService extends EventEmitter {
       return { success: false, delivered: false, error: `Invalid recipient phone number: ${to}` };
     }
 
-    try {
-      let result;
-      // BerryProtocol API: sendText(to, text) or sendMessage(to, { text })
-      if (typeof this.client.sendText === 'function') {
-        result = await this.client.sendText(jid, message);
-      } else if (typeof this.client.sendMessage === 'function') {
-        result = await this.client.sendMessage(jid, { text: message });
-      } else if (this.client.socket && typeof this.client.socket.sendMessage === 'function') {
-        result = await this.client.socket.sendMessage(jid, { text: message });
-      } else {
-        throw new Error('No compatible BerryProtocol message sending method available');
+    for (let attempt = 1; ; attempt++) {
+      try {
+        const result = await this.dispatchText(jid, message);
+        console.log(`[WhatsAppBerryService] Outbound WhatsApp message delivered to ${jid} (ID: ${result?.id || 'sent'})`);
+        return {
+          success: true,
+          delivered: true,
+          id: result?.id || `berry_${Date.now()}`,
+          status: this.status,
+          result
+        };
+      } catch (err) {
+        console.error(`[WhatsAppBerryService] Failed to send message to ${to}: ${err.message}`);
+        const brokenSocket = Boolean(err.message && (err.message.includes('Connection Closed') || err.message.includes('closed') || err.message.includes('socket')));
+        if (brokenSocket) {
+          this.status = 'DISCONNECTED';
+          this.emit('status', this.status);
+          console.log(`[WhatsAppBerryService] Detected broken socket during send. Triggering immediate reconnect...`);
+          if (!this.isInitializing) this.initialize().catch(() => {});
+          // Retry once after the reconnect so a blip mid-send does not lose the OTP.
+          if (attempt === 1 && await this.waitForConnected(RECONNECT_WAIT_MS) && this.client) continue;
+        }
+        return { success: false, delivered: false, error: err.message, status: this.status };
       }
-
-      console.log(`[WhatsAppBerryService] Outbound WhatsApp message delivered to ${jid} (ID: ${result?.id || 'sent'})`);
-      return {
-        success: true,
-        delivered: true,
-        id: result?.id || `berry_${Date.now()}`,
-        status: this.status,
-        result
-      };
-    } catch (err) {
-      console.error(`[WhatsAppBerryService] Failed to send message to ${to}: ${err.message}`);
-      if (err.message && (err.message.includes('Connection Closed') || err.message.includes('closed') || err.message.includes('socket'))) {
-        this.status = 'DISCONNECTED';
-        this.emit('status', this.status);
-        console.log(`[WhatsAppBerryService] Detected broken socket during send. Triggering immediate reconnect...`);
-        this.initialize().catch(() => {});
-      }
-      return { success: false, delivered: false, error: err.message, status: this.status };
     }
+  }
+
+  /** BerryProtocol API: sendText(to, text) or sendMessage(to, { text }). */
+  async dispatchText(jid, message) {
+    if (typeof this.client.sendText === 'function') return this.client.sendText(jid, message);
+    if (typeof this.client.sendMessage === 'function') return this.client.sendMessage(jid, { text: message });
+    if (this.client.socket && typeof this.client.socket.sendMessage === 'function') return this.client.socket.sendMessage(jid, { text: message });
+    throw new Error('No compatible BerryProtocol message sending method available');
+  }
+
+  /**
+   * Resolves true once the session is CONNECTED, false after timeoutMs.
+   * @param {number} timeoutMs
+   */
+  async waitForConnected(timeoutMs) {
+    const deadline = Date.now() + timeoutMs;
+    while (this.status !== 'CONNECTED' && Date.now() < deadline) {
+      await new Promise(r => setTimeout(r, 250));
+    }
+    return this.status === 'CONNECTED';
   }
 }
 
