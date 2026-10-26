@@ -5,6 +5,10 @@ import { startCloudflaredSafely } from '../packages/common/src/tunnel-command.js
 
 if (!process.env.YOUPI_MODE) process.env.YOUPI_MODE = 'localhost';
 if (!process.env.NODE_ENV) process.env.NODE_ENV = 'development';
+// The demo store receives webhooks on localhost:5000; without this the SSRF guard blocks every
+// local delivery, so the store is never told a payment succeeded. start.js (production) keeps
+// the guard on unless the operator opts in.
+if (!process.env.YOUPI_ALLOW_PRIVATE_WEBHOOKS) process.env.YOUPI_ALLOW_PRIVATE_WEBHOOKS = 'true';
 
 console.log('====================================================');
 console.log('🚀 Starting YOUPI PG (Development / Localhost Mode)');
