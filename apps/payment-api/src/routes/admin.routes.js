@@ -22,11 +22,14 @@ function resolveSellingModeAndMethods(body, currentBranding = {}) {
     }
   }
 
-  const codOn = body.codEnabled !== undefined 
-    ? Boolean(body.codEnabled) 
-    : (inputBranding.codEnabled !== undefined 
-        ? Boolean(inputBranding.codEnabled) 
-        : (currentBranding.codEnabled !== undefined ? Boolean(currentBranding.codEnabled) : (currentBranding.enabledPaymentMethods ? currentBranding.enabledPaymentMethods.includes(PaymentMethod.COD) : true)));
+  // COD is opt-in (no money is collected up front), matching the checkout and confirm-cod.
+  // Defaulting it on here showed COD as enabled in admin while checkout never offered it, and
+  // persisted it as enabled the first time any other setting was saved.
+  const codOn = body.codEnabled !== undefined
+    ? Boolean(body.codEnabled)
+    : (inputBranding.codEnabled !== undefined
+        ? Boolean(inputBranding.codEnabled)
+        : (currentBranding.codEnabled !== undefined ? Boolean(currentBranding.codEnabled) : (currentBranding.enabledPaymentMethods ? currentBranding.enabledPaymentMethods.includes(PaymentMethod.COD) : false)));
 
   const cashOn = body.cashEnabled !== undefined 
     ? Boolean(body.cashEnabled) 

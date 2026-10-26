@@ -1152,7 +1152,9 @@ export function registerCheckoutRoutes(server, ctx) {
     const merchantBranding = merchant?.branding || {};
     const isCounterRequested = method === PaymentMethod.CASH_COUNTER || method === PaymentMethod.CARD_COUNTER;
     let sellingMode = merchantBranding.sellingMode || (isCounterRequested ? 'OFFLINE' : 'ONLINE');
-    let rawEnabled = merchantBranding.enabledPaymentMethods || (sellingMode === 'ONLINE' ? ['UPI', 'COD'] : ['UPI', 'CASH_COUNTER', 'CARD_COUNTER']);
+    // Same default as the checkout state and confirm-cod: COD is opt-in. Defaulting it on here let
+    // a session switch to COD that confirm-cod then refused, leaving the order stuck.
+    let rawEnabled = merchantBranding.enabledPaymentMethods || (sellingMode === 'ONLINE' ? ['UPI'] : ['UPI', 'CASH_COUNTER', 'CARD_COUNTER']);
     let enabledMethods = ['UPI'];
     if (sellingMode === 'ONLINE') {
       if (rawEnabled.includes('COD')) enabledMethods.push('COD');

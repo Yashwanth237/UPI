@@ -75,6 +75,29 @@ describe('Architectural Update: Selling Modes (Online vs Offline), COD Flow, & C
     assert.equal(getRes.body.payeeName, 'SuperStore Retail');
   });
 
+  test('1b. Unconfigured merchant: COD cannot be selected when the checkout does not offer it', async () => {
+    const payRes = await request('/api/v1/payments', {
+      method: 'POST',
+      body: { orderId: 'ORDER-DEFAULTS-100', amount: '99.00', method: PaymentMethod.UPI, autoActivate: true }
+    });
+    assert.equal(payRes.status, 201);
+    const paymentId = payRes.body.paymentId;
+
+    const stateRes = await request(`/api/v1/checkout/${paymentId}/state`);
+    assert.deepEqual(stateRes.body.enabledMethods, ['UPI']);
+
+    // Admin must report the same COD default the checkout applies.
+    const settings = await request('/api/v1/admin/merchant-settings');
+    assert.equal(settings.body.codEnabled, false);
+    assert.deepEqual(settings.body.enabledPaymentMethods, ['UPI']);
+
+    // select-method used to default COD on while confirm-cod defaulted it off, stranding the session.
+    const switchRes = await request(`/api/v1/checkout/${paymentId}/select-method`, { method: 'POST', body: { method: 'COD' } });
+    assert.equal(switchRes.status, 400);
+    const after = await request(`/api/v1/checkout/${paymentId}/state`);
+    assert.equal(after.body.method, 'UPI');
+  });
+
   test('2. Online Selling Mode Configuration & Method Invariants', async () => {
     // Merchant configures Online Selling Mode with Cash on Delivery enabled
     const saveRes = await request('/api/v1/admin/merchant-settings', {
