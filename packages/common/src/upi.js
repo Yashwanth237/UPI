@@ -31,6 +31,10 @@ export function buildUpiUri(options) {
   }
 
   const amountStr = toRupeesString(options.amountPaise);
+  // A payment QR or intent for nothing is never valid.
+  if (amountStr === '0.00') {
+    throw new Error('UPI amount must be greater than zero');
+  }
 
   const params = new URLSearchParams();
   params.set('pa', options.payeeVpa.trim());
