@@ -21,6 +21,7 @@ const testFiles = [
   'apps/checkout-portal/src/__tests__/issue-64-hardening.test.js',
   'apps/checkout-portal/src/__tests__/checkout-ux-honesty.test.js',
   'apps/checkout-portal/src/__tests__/checkout-qr-and-layout.test.js',
+  'apps/checkout-portal/src/__tests__/checkout-status-sync.test.js',
   'apps/coin-wallet-store/src/__tests__/coin-wallet-store.test.js',
   'apps/merchant-admin/src/__tests__/merchant-admin.test.js',
   'apps/merchant-admin/src/__tests__/console-shell.test.js',
@@ -50,6 +51,7 @@ const testFiles = [
   'apps/payment-api/src/__tests__/observer-poller.test.js',
   'apps/payment-api/src/__tests__/payment-detection-scenarios.test.js',
   'apps/payment-api/src/__tests__/observation-security-and-accounts.test.js',
+  'apps/payment-api/src/__tests__/payment-confirmation-diagnostics.test.js',
   'scripts/chaos-concurrency.test.js',
   'scripts/production-infrastructure.test.js'
 ];
