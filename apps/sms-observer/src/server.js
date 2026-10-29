@@ -44,11 +44,14 @@ export class SmsObserverServer {
           isRunning: this.service.isRunning,
           lastPollAt: this.service.lastPollAt,
           observedCount: this.service.observedCount,
-          sourceConnected: Boolean(gm.isPaired),
+          // CONNECTED needs pairing, the background browser, and a sighting in the last 5 min;
+          // a remembered isPaired flag alone can be stale.
+          sourceConnected: gm.status === 'CONNECTED',
           sources: {
             googleMessages: {
               enabled: process.env.ENABLE_LEGACY_CHROME_OBSERVERS === 'true',
               paired: Boolean(gm.isPaired),
+              status: gm.status,
               mode: gm.mode
             }
           }

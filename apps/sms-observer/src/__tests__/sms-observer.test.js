@@ -96,7 +96,46 @@ describe('Google Messages / SMS Payment Observer Integration Tests', () => {
       assert.equal(json.status, 'UP');
       assert.equal(json.service, 'sms-observer');
       assert.equal(typeof json.sourceConnected, 'boolean');
-      assert.equal(json.sourceConnected, json.sources.googleMessages.paired);
+      assert.equal(json.sourceConnected, json.sources.googleMessages.status === 'CONNECTED');
+    });
+
+    describe('health reports the real SMS source state', () => {
+      let saved;
+      before(() => {
+        const a = smsInstance.automator;
+        saved = { isPaired: a.isPaired, mode: a.mode, lastSeenAt: a.lastSeenAt };
+      });
+      after(() => Object.assign(smsInstance.automator, saved));
+
+      test('no paired source: service is UP but sourceConnected is false', async () => {
+        Object.assign(smsInstance.automator, { isPaired: false, mode: 'STANDBY', lastSeenAt: null });
+        const json = JSON.parse((await get('/health')).text);
+        assert.equal(json.status, 'UP');
+        assert.equal(json.sourceConnected, false);
+        assert.equal(json.sources.googleMessages.paired, false);
+        assert.equal(json.sources.googleMessages.status, 'STANDBY');
+      });
+
+      test('a remembered pairing without a live browser is not a connected source', async () => {
+        Object.assign(smsInstance.automator, { isPaired: true, mode: 'STANDBY', lastSeenAt: null });
+        const json = JSON.parse((await get('/health')).text);
+        assert.equal(json.sources.googleMessages.paired, true);
+        assert.equal(json.sourceConnected, false);
+      });
+
+      test('paired, background and recently seen counts as connected', async () => {
+        Object.assign(smsInstance.automator, { isPaired: true, mode: 'BACKGROUND', lastSeenAt: new Date() });
+        const json = JSON.parse((await get('/health')).text);
+        assert.equal(json.sources.googleMessages.status, 'CONNECTED');
+        assert.equal(json.sourceConnected, true);
+      });
+
+      test('a non-payment SMS creates no observation', async () => {
+        const before = smsInstance.service.observedCount;
+        const result = await smsInstance.service.processSms({ text: 'Your OTP is 482913. Do not share it.', sender: 'VM-ICICIB' });
+        assert.equal(result, null);
+        assert.equal(smsInstance.service.observedCount, before);
+      });
     });
 
     test('GET / serves an HTML landing page instead of "Route Not Found"', async () => {

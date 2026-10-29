@@ -19,6 +19,7 @@ export function startSmsObserver(port = null, options = {}) {
       console.log(`[SMS Observer] Service listening on port ${finalPort}`);
       resolve({
         service,
+        automator: observerServer.automator,
         port: finalPort,
         close: () => new Promise(cb => {
           service.stop();
