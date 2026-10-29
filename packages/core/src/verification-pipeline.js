@@ -5,7 +5,8 @@ import {
   calculateObservationFingerprint,
   toPaise,
   normalizeEmail,
-  normalizeMobile
+  normalizeMobile,
+  isAllowedNotificationPackage
 } from '@youpi/common';
 import { extractIntelligentAmount } from './bank-sms-parser.js';
 import { ObservationNormalizer } from './normalizer.js';
@@ -16,6 +17,32 @@ import { ObservationNormalizer } from './normalizer.js';
  * No specific banks are hardcoded.
  */
 
+
+/**
+ * Bank SMS header codes the operator trusts, from SMS_TRUSTED_SENDERS (comma separated, e.g.
+ * "HDFCBK,SBIUPI"). Unset or empty = no allow-list (any alphanumeric sender passes stage 2).
+ * Read per call so a restart is not needed in tests and the env stays the single source.
+ * @returns {Set<string> | null}
+ */
+function trustedSmsSenders() {
+  const raw = (process.env.SMS_TRUSTED_SENDERS || '').trim();
+  if (!raw) return null;
+  const codes = raw.split(',').map(s => smsHeaderCode(s)).filter(Boolean);
+  return codes.length ? new Set(codes) : null;
+}
+
+/**
+ * Reduces a delivered SMS sender ("VM-HDFCBK", "AD-HDFCBK-S", "hdfcbk") to its DLT header code
+ * ("HDFCBK") by dropping the 2-letter operator/circle prefix and the -S/-T/-P/-G category suffix.
+ * @param {string} sender
+ */
+function smsHeaderCode(sender) {
+  return String(sender || '')
+    .trim()
+    .toUpperCase()
+    .replace(/^[A-Z]{2}-/, '')
+    .replace(/-[SPTG]$/, '');
+}
 
 /**
  * Known malicious, synthetic, or defined fake injection patterns.
@@ -373,6 +400,27 @@ export class PaymentVerificationPipeline {
             stage2
           });
         }
+
+        // Optional operator allow-list of bank SMS headers (SMS_TRUSTED_SENDERS). A sender ID is
+        // only a label the network delivered, not proof of origin, but restricting it to the
+        // merchant's own bank headers stops made-up senders such as "FAKEBNK".
+        const trusted = trustedSmsSenders();
+        if (trusted && !isAllowedNotificationPackage(cleanSender.toLowerCase()) && !trusted.has(smsHeaderCode(cleanSender))) {
+          stage2 = {
+            stage: 2,
+            name: 'FILTER',
+            status: 'FAILED',
+            reason: 'UNTRUSTED_SMS_SENDER',
+            details: `SMS sender '${sender}' is not in SMS_TRUSTED_SENDERS.`
+          };
+          return buildResult({
+            finalStatus: 'REJECTED',
+            failingStage: 2,
+            failingCondition: 'UNTRUSTED_SMS_SENDER',
+            failingReason: stage2.details,
+            stage2
+          });
+        }
       }
     } else if (source === 'GMAIL') {
       const emailMatch = sender.match(/<([^>]+)>/);
@@ -488,26 +536,46 @@ export class PaymentVerificationPipeline {
       });
     }
 
-    // Invariant 1b: Reject debit notifications. Same ordering rule as BankSmsParser: a debit
-    // indicator before any credit indicator means money left the account, even when the text
-    // goes on to say the payee was "credited" or the amount "will be credited back". Without
-    // this, the merchant's own outgoing payment or a failed-debit reversal of the same amount
-    // settles whichever order is open on the account.
-    const debitIdx = rawText.search(/\b(?:debited|withdrawn|deducted|spent|paid rs|sent rs)\b/i);
-    const creditIdx = rawText.search(/\b(?:credited|received|deposit|deposited)\b/i);
-    if (debitIdx !== -1 && (creditIdx === -1 || debitIdx < creditIdx)) {
-      stage3 = {
-        stage: 3,
-        name: 'PARSER',
-        status: 'FAILED',
-        reason: 'DEBIT_NOTIFICATION',
-        details: 'Message reports money leaving the account (debit or reversal), not an incoming credit.'
-      };
+    // Invariant 1b: Transaction direction. Only a plain incoming credit may settle an order.
+    // - Reversals, refunds and failed transactions never settle one, even though they often say
+    //   "credited back": the money is the merchant's own, not a customer payment.
+    // - A debit indicator before any credit indicator is an outgoing payment ("debited ... payee
+    //   credited"), the same ordering rule BankSmsParser applies.
+    // - A message carrying both directions with the credit first ("Rs 500 credited to PAYEE from
+    //   your a/c, debited") cannot be told apart from a credit by keywords alone, so it is not
+    //   settled automatically either. The cost is that a genuine credit with a trailing charge
+    //   line needs a manual check, which is the safe side of the trade.
+    const directionFailure = (() => {
+      if (/\b(?:revers(?:al|ed|ing)|refund(?:ed|s)?|charge\s*back|credited\s+back|(?:has\s+)?failed|declined)\b/i.test(rawText)) {
+        return ['REVERSAL_OR_REFUND', 'Message describes a reversal, refund or failed transaction, not a new incoming payment.'];
+      }
+      const debitIdx = rawText.search(/\b(?:debited|withdrawn|deducted|spent|paid rs|sent rs)\b/i);
+      if (debitIdx === -1) return null;
+      const creditIdx = rawText.search(/\b(?:credited|received|deposit|deposited)\b/i);
+      if (creditIdx === -1 || debitIdx < creditIdx) {
+        return ['DEBIT_NOTIFICATION', 'Message reports money leaving the account, not an incoming credit.'];
+      }
+      return ['AMBIGUOUS_DIRECTION', 'Message mentions both a credit and a debit; it is not settled automatically and needs a manual check.'];
+    })();
+    if (directionFailure) {
+      const [reason, details] = directionFailure;
+      stage3 = { stage: 3, name: 'PARSER', status: 'FAILED', reason, details };
+      if (this.auditRepo && session) {
+        // Kept for manual review without the message body.
+        this.auditRepo.log({
+          merchantId: session.merchantId,
+          entityType: 'PAYMENT_SESSION',
+          entityId: session.id,
+          action: 'OBSERVATION_DIRECTION_REJECTED',
+          actorType: 'SYSTEM',
+          details: { reason, source, messageId }
+        });
+      }
       return buildResult({
         finalStatus: 'REJECTED',
         failingStage: 3,
-        failingCondition: 'DEBIT_NOTIFICATION',
-        failingReason: stage3.details,
+        failingCondition: reason,
+        failingReason: details,
         stage2,
         stage3,
         session
