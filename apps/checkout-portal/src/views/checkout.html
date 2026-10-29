@@ -1400,7 +1400,36 @@
         };
       },
 
-      async getOrRegister() {
+      // Concurrent callers (boot, SSE, polling) share one registration, so a page can never
+      // register two devices and bind its session to the one it then stops using.
+      _pending: null,
+      getOrRegister() {
+        if (this.currentDeviceId) {
+          return Promise.resolve({ deviceId: this.currentDeviceId, deviceToken: this.currentDeviceToken });
+        }
+        if (!this._pending) {
+          this._pending = this._getOrRegister().finally(() => { this._pending = null; });
+        }
+        return this._pending;
+      },
+      // Forgets a device identity the server no longer recognises (unregistered or revoked, e.g.
+      // after the gateway database was reset), so the next getOrRegister() registers afresh.
+      async reset() {
+        this.currentDeviceId = null;
+        this.currentDeviceToken = null;
+        try { localStorage.removeItem('ypg_device_id'); localStorage.removeItem('ypg_device_token'); } catch {}
+        try {
+          const db = await this.openDb();
+          if (!db) return;
+          await new Promise((resolve) => {
+            const tx = db.transaction(this.storeName, 'readwrite');
+            tx.objectStore(this.storeName).delete('primary_device');
+            tx.oncomplete = () => resolve();
+            tx.onerror = () => resolve();
+          });
+        } catch {}
+      },
+      async _getOrRegister() {
         if (this.currentDeviceId) {
           return { deviceId: this.currentDeviceId, deviceToken: this.currentDeviceToken };
         }
@@ -1516,13 +1545,28 @@
       }
     }
 
+    // Server answers meaning "this browser's saved device identity is not a registered device".
+    // Distinct from a session bound to another device (boundDeviceId set), which must stay blocked.
+    const STALE_DEVICE_CODES = ['DEVICE_REVOKED', 'DEVICE_TOKEN_INVALID', 'DEVICE_SIGNATURE_INVALID', 'DEVICE_CREDENTIALS_REQUIRED', 'DEVICE_ID_REQUIRED'];
+    const isStaleDeviceResponse = (status, data) =>
+      (status === 409 || status === 401) && data && STALE_DEVICE_CODES.includes(data.code || data.error) && !data.boundDeviceId;
+    let staleDeviceRetried = false;
+
     async function loadStateOnce() {
       try {
         await DeviceIdentity.getOrRegister();
-        const headers = getApiHeaders();
+        let res = await fetch(`${API_BASE}/api/v1/checkout/${PAYMENT_ID}/state`, { headers: getApiHeaders() });
+        let data = await res.json().catch(() => ({}));
 
-        const res = await fetch(`${API_BASE}/api/v1/checkout/${PAYMENT_ID}/state`, { headers });
-        const data = await res.json().catch(() => ({}));
+        // A stale identity on an unbound session: register this browser again and retry once.
+        // This is the same as a first visit; a session bound to a different device still gets 409.
+        if (isStaleDeviceResponse(res.status, data) && !staleDeviceRetried) {
+          staleDeviceRetried = true;
+          await DeviceIdentity.reset();
+          await DeviceIdentity.getOrRegister();
+          res = await fetch(`${API_BASE}/api/v1/checkout/${PAYMENT_ID}/state`, { headers: getApiHeaders() });
+          data = await res.json().catch(() => ({}));
+        }
 
         if (res.ok && state && isTerminalStatus(state.status) && !isTerminalStatus(data.status)) {
           return;
@@ -2779,7 +2823,23 @@
           })
         });
 
-        const data = await res.json();
+        let data = await res.json().catch(() => ({}));
+        // The current device identity is not registered (e.g. the gateway database was reset):
+        // register this browser afresh and ask once more instead of failing forever.
+        if (res.status === 401 && STALE_DEVICE_CODES.includes(data.error)) {
+          await DeviceIdentity.reset();
+          await DeviceIdentity.getOrRegister();
+          const retry = await fetch(`${API_BASE}/api/v1/checkout/${PAYMENT_ID}/end-and-restart-payment`, {
+            method: 'POST',
+            headers: getApiHeaders({ 'Content-Type': 'application/json' }),
+            body: JSON.stringify({
+              deviceId: DeviceIdentity.currentDeviceId,
+              deviceToken: DeviceIdentity.currentDeviceToken,
+              conflictingSessionId
+            })
+          });
+          data = await retry.json().catch(() => ({}));
+        }
         if (data.success && (data.checkoutUrl || data.newSessionId)) {
           const targetUrl = data.checkoutUrl || `/checkout/${data.newSessionId}`;
           window.location.href = targetUrl;

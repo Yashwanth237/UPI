@@ -42,7 +42,12 @@ describe('Checkout status synchronisation and success receipt', () => {
         state: null,
         PAYMENT_ID: 'pay_1',
         API_BASE: '',
-        DeviceIdentity: { getOrRegister: async () => ({}) },
+        DeviceIdentity: {
+          resets: 0,
+          registrations: 0,
+          getOrRegister: async function () { this.registrations++; return {}; },
+          reset: async function () { this.resets++; }
+        },
         getApiHeaders: () => ({}),
         dismissSplashScreen: () => {},
         renderDuplicateSession: () => rendered.push('DUPLICATE'),
@@ -61,6 +66,33 @@ describe('Checkout status synchronisation and success receipt', () => {
       vm.runInContext(`${code}\nthis.loadState = loadState;`, sandbox);
       return { sandbox, rendered, calls: () => calls };
     }
+
+    const staleDevice = { status: 409, body: { error: 'DUPLICATE_SESSION_DETECTED', code: 'DEVICE_REVOKED', boundDeviceId: null } };
+
+    test('a stale device identity on an unbound session re-registers once and loads the real state', async () => {
+      const h = harness([staleDevice, { status: 200, body: { status: 'ACTIVE' } }]);
+      await h.sandbox.loadState();
+      assert.equal(h.sandbox.DeviceIdentity.resets, 1);
+      assert.deepEqual(h.rendered, ['ACTIVE'], 'no Duplicate Session screen for our own browser');
+    });
+
+    test('if the fresh identity is refused too, the Duplicate Session screen shows and it does not loop', async () => {
+      const h = harness([staleDevice, staleDevice, staleDevice]);
+      await h.sandbox.loadState();
+      await h.sandbox.loadState();
+      assert.equal(h.sandbox.DeviceIdentity.resets, 1, 'one re-registration per page');
+      assert.deepEqual(h.rendered, ['DUPLICATE', 'DUPLICATE']);
+    });
+
+    test('a session bound to another device stays blocked: no re-registration', async () => {
+      const h = harness([{ status: 409, body: { error: 'DUPLICATE_SESSION_DETECTED', code: 'DEVICE_MISMATCH', boundDeviceId: 'dev_other' } }]);
+      await h.sandbox.loadState();
+      assert.equal(h.sandbox.DeviceIdentity.resets, 0);
+      assert.deepEqual(h.rendered, ['DUPLICATE']);
+      const h2 = harness([{ status: 409, body: { error: 'DUPLICATE_SESSION_DETECTED', code: 'DEVICE_REVOKED', boundDeviceId: 'dev_other' } }]);
+      await h2.sandbox.loadState();
+      assert.equal(h2.sandbox.DeviceIdentity.resets, 0, 'bound sessions are never escaped by re-registering');
+    });
 
     test('overlapping calls are serialised: one request at a time, one re-run afterwards', async () => {
       const h = harness([{ status: 200, body: { status: 'ACTIVE' }, delayMs: 30 }]);
@@ -100,6 +132,58 @@ describe('Checkout status synchronisation and success receipt', () => {
       await h.sandbox.loadState();
       assert.deepEqual(h.rendered, []);
       assert.equal(h.sandbox.state, null);
+    });
+  });
+
+  describe('DeviceIdentity', () => {
+    const objSrc = slice('    const DeviceIdentity = {', '\n    function getApiHeaders');
+
+    function load(registerDelayMs = 20) {
+      const store = new Map();
+      let registerCalls = 0;
+      const sandbox = {
+        API_BASE: '',
+        window: { crypto: null, indexedDB: null, screen: {} },
+        navigator: {},
+        document: { createElement: () => ({ getContext: () => null }) },
+        localStorage: {
+          getItem: k => (store.has(k) ? store.get(k) : null),
+          setItem: (k, v) => store.set(k, String(v)),
+          removeItem: k => store.delete(k)
+        },
+        btoa: s => Buffer.from(s).toString('base64'),
+        Intl,
+        console: { warn: () => {}, error: () => {} },
+        fetch: async () => {
+          const n = ++registerCalls;
+          await new Promise(r => setTimeout(r, registerDelayMs));
+          return { json: async () => ({ deviceId: `dev_${n}`, deviceToken: `tok_${n}` }) };
+        },
+        setTimeout,
+        Promise
+      };
+      vm.createContext(sandbox);
+      vm.runInContext(`${objSrc}\nthis.DeviceIdentity = DeviceIdentity;`, sandbox);
+      return { D: sandbox.DeviceIdentity, store, registerCalls: () => registerCalls };
+    }
+
+    test('concurrent first calls share one registration', async () => {
+      const { D, registerCalls } = load();
+      const results = await Promise.all([D.getOrRegister(), D.getOrRegister(), D.getOrRegister()]);
+      assert.equal(registerCalls(), 1);
+      assert.ok(results.every(r => r.deviceId === 'dev_1'));
+    });
+
+    test('reset() forgets the stored identity so the next call registers a new device', async () => {
+      const { D, store, registerCalls } = load(0);
+      await D.getOrRegister();
+      assert.equal(store.get('ypg_device_id'), 'dev_1');
+      await D.reset();
+      assert.equal(store.has('ypg_device_id'), false);
+      assert.equal(store.has('ypg_device_token'), false);
+      const again = await D.getOrRegister();
+      assert.equal(again.deviceId, 'dev_2');
+      assert.equal(registerCalls(), 2);
     });
   });
 
