@@ -29,6 +29,46 @@ function redactPipeline(result) {
   return rest;
 }
 
+/** Audit action for an observation the pipeline did not settle. */
+export const OBSERVATION_NOT_SETTLED = 'OBSERVATION_NOT_SETTLED';
+
+/**
+ * Records why an observation did not settle a payment, without its message text, so a missing
+ * "Payment Successful" can be traced to a stage. Before this, rejected observations left no
+ * record at all: only the observer's console line said anything.
+ * Kept: source, sender header, stage, reason, parsed amount, last 4 of the reference, text length.
+ * @param {any} ctx
+ * @param {{ channel: string, source: string, sender?: string, receivingAccountId?: string, rawText?: string, pipeResult: any }} input
+ */
+function recordObservationNotSettled(ctx, { channel, source, sender, receivingAccountId, rawText, pipeResult }) {
+  if (!ctx.auditRepo || !pipeResult || pipeResult.status === 'VERIFIED') return;
+  try {
+    const account = receivingAccountId && ctx.accountRepo ? ctx.accountRepo.findById(receivingAccountId) : null;
+    const reference = String(pipeResult.reference || pipeResult.stages?.stage3?.details?.reference || '');
+    ctx.auditRepo.log({
+      merchantId: account?.merchantId || null,
+      entityType: 'OBSERVATION',
+      entityId: pipeResult.messageId || 'unknown',
+      action: OBSERVATION_NOT_SETTLED,
+      actorType: 'OBSERVER',
+      details: {
+        channel,
+        source,
+        sender: typeof sender === 'string' ? sender.slice(0, 80) : null,
+        receivingAccountId: receivingAccountId || null,
+        status: pipeResult.status || 'UNRESOLVED',
+        stage: pipeResult.failingStage ?? null,
+        reason: pipeResult.failingCondition || pipeResult.stages?.stage6?.outcomeStatus || 'UNRESOLVED_OBSERVATION',
+        amountPaise: pipeResult.amountPaise != null ? String(pipeResult.amountPaise) : null,
+        referenceLast4: reference ? reference.slice(-4) : null,
+        textLength: typeof rawText === 'string' ? rawText.length : 0
+      }
+    });
+  } catch {
+    // Diagnostics must never change the outcome of an observation.
+  }
+}
+
 /**
  * Whether a paired phone can reach `url`. The observer APK refuses cleartext except to loopback
  * and the emulator host (network_security_config.xml), so a physical phone needs an https:// URL
@@ -168,6 +208,9 @@ export function registerPollerRoutes(server, ctx) {
       isTest: Boolean(body.isTest) && isAdminRequest(req),
       testModeActive: Boolean(body.testModeActive) && isAdminRequest(req),
       isSimulated: Boolean(body.isTest) && isAdminRequest(req)
+    });
+    recordObservationNotSettled(ctx, {
+      channel: 'POLLER_EVENTS', source: body.source, sender, receivingAccountId: body.receivingAccountId, rawText, pipeResult
     });
 
     if (pipeResult.status === 'REJECTED' && pipeResult.failingCondition === 'FRAUDULENT_PAYMENT_INJECTION') {
@@ -492,6 +535,12 @@ export function registerPollerRoutes(server, ctx) {
       isTest: false, // device-supplied flags must never relax verification
       deviceInfo: device ? `${device.device_name} (${device.device_model})` : 'Android SMS Gateway'
     });
+    // Personal and promotional SMS (no amount, unresolved) are routine and not worth a record.
+    if (amountPaise || pipeResult.status !== 'UNRESOLVED') {
+      recordObservationNotSettled(ctx, {
+        channel: 'ANDROID', source: 'SMS', sender: body.sender || req.headers['x-sender'] || body.rawNotification?.package, receivingAccountId, rawText, pipeResult
+      });
+    }
 
     if (pipeResult.status === 'REJECTED' && pipeResult.failingCondition === 'FRAUDULENT_PAYMENT_INJECTION') {
       HttpServer.json(res, 403, {
@@ -651,6 +700,30 @@ export function registerPollerRoutes(server, ctx) {
       phoneReachable: phoneReach.ok,
       phoneReachabilityWarning: phoneReach.warning,
       devices
+    });
+  });
+
+  // GET /api/v1/admin/observations/diagnostics (admin only, via the /api/v1/admin/ guard)
+  // The most recent observations that did not settle a payment, with stage and reason but
+  // never the bank message text. Answers "did the alert arrive, and where did it stop?".
+  server.get('/api/v1/admin/observations/diagnostics', async (req, res) => {
+    const limit = Math.min(Math.max(Number(req.query.limit) || 50, 1), 200);
+    const rows = ctx.db.query(
+      'SELECT id, entity_id, details, created_at FROM audit_logs WHERE action = ? ORDER BY created_at DESC LIMIT ?',
+      [OBSERVATION_NOT_SETTLED, limit]
+    );
+    const lastObservation = ctx.db.queryOne('SELECT MAX(ingested_at) AS at FROM payment_observations');
+    const devices = ctx.db.query('SELECT id, is_active, last_heartbeat_at, last_observation_at FROM android_devices ORDER BY created_at DESC');
+    HttpServer.json(res, 200, {
+      lastStoredObservationAt: lastObservation?.at || null,
+      androidDevices: devices.map(d => ({
+        id: d.id, isActive: Boolean(d.is_active), lastHeartbeatAt: d.last_heartbeat_at, lastObservationAt: d.last_observation_at
+      })),
+      notSettled: rows.map(r => {
+        let details = {};
+        try { details = JSON.parse(r.details || '{}'); } catch {}
+        return { id: r.id, observationId: r.entity_id, at: r.created_at, ...details };
+      })
     });
   });
 
