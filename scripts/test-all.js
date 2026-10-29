@@ -20,6 +20,7 @@ const testFiles = [
   'apps/checkout-portal/src/__tests__/checkout-xss.test.js',
   'apps/checkout-portal/src/__tests__/issue-64-hardening.test.js',
   'apps/checkout-portal/src/__tests__/checkout-ux-honesty.test.js',
+  'apps/checkout-portal/src/__tests__/checkout-qr-and-layout.test.js',
   'apps/coin-wallet-store/src/__tests__/coin-wallet-store.test.js',
   'apps/merchant-admin/src/__tests__/merchant-admin.test.js',
   'apps/merchant-admin/src/__tests__/console-shell.test.js',
