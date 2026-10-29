@@ -25,13 +25,31 @@ public class SmsReceiver extends BroadcastReceiver {
             return;
         }
 
-        for (SmsMessage sms : messages) {
-            if (sms == null) continue;
-            final String sender = sms.getOriginatingAddress();
-            final String body = sms.getMessageBody();
-            final long timestamp = sms.getTimestampMillis();
+        // A bank alert longer than one SMS arrives as several PDUs in the same broadcast. Forwarding
+        // each part separately split the amount and the UTR across observations, so neither part
+        // could be verified. Join the parts per sender, in delivery order, before forwarding.
+        java.util.LinkedHashMap<String, StringBuilder> bodies = new java.util.LinkedHashMap<>();
+        java.util.HashMap<String, Long> firstTimestamps = new java.util.HashMap<>();
+        for (SmsMessage part : messages) {
+            if (part == null) continue;
+            String from = part.getOriginatingAddress();
+            String key = from != null ? from : "";
+            StringBuilder sb = bodies.get(key);
+            if (sb == null) {
+                sb = new StringBuilder();
+                bodies.put(key, sb);
+                firstTimestamps.put(key, part.getTimestampMillis());
+            }
+            String text = part.getMessageBody();
+            if (text != null) sb.append(text);
+        }
 
-            Log.i(TAG, "Captured incoming SMS from [" + sender + "]: " + (body != null ? body.length() : 0) + " chars");
+        for (java.util.Map.Entry<String, StringBuilder> entry : bodies.entrySet()) {
+            final String sender = entry.getKey().isEmpty() ? null : entry.getKey();
+            final String body = entry.getValue().toString();
+            final long timestamp = firstTimestamps.get(entry.getKey());
+
+            Log.i(TAG, "Captured incoming SMS: " + body.length() + " chars");
 
             // Dispatch to YouPI Gateway in asynchronous worker thread
             new Thread(new Runnable() {
