@@ -99,6 +99,28 @@ export class GmailPoller {
     this.processedMessageIds = new Set();
     this.consecutiveFailures = 0;
     this.failingSince = 0;
+    // Outcome of the last finished poll: NOT_AUTHORIZED | FAILED | NO_MATCHES | MESSAGES_FOUND.
+    this.lastPoll = { outcome: null, at: null, error: null, matched: 0, processed: 0 };
+  }
+
+  /** Records a poll outcome for /health; logs once when Gmail is not linked. */
+  recordPoll(outcome, { error = null, matched = 0, processed = 0 } = {}) {
+    if (outcome === 'NOT_AUTHORIZED' && this.lastPoll.outcome !== 'NOT_AUTHORIZED') {
+      console.warn('[Gmail Observer] No Gmail authorization stored; polling is idle. Link Gmail in Merchant Admin.');
+    }
+    this.lastPoll = { outcome, at: new Date(), error, matched, processed };
+  }
+
+  /** Health view of the poller. Never includes tokens or message content. */
+  getDiagnostics() {
+    return {
+      authorized: Boolean(this.credentials?.refreshToken) && this.lastPoll.outcome !== 'NOT_AUTHORIZED',
+      lastPollOutcome: this.lastPoll.outcome,
+      lastPollCompletedAt: this.lastPoll.at,
+      lastPollError: this.lastPoll.error,
+      lastMatchCount: this.lastPoll.matched,
+      lastProcessedCount: this.lastPoll.processed
+    };
   }
 
   setCredentials(creds) {
@@ -314,7 +336,10 @@ export class GmailPoller {
     try {
       this.lastPollAt = new Date();
       const accessToken = await this.getAccessToken();
-      if (!accessToken) return;
+      if (!accessToken) {
+        this.recordPoll('NOT_AUTHORIZED');
+        return;
+      }
 
       const query = encodeURIComponent('subject:(credit OR credited OR received OR upi OR deposit OR alert)');
       const listRes = await fetch(`https://gmail.googleapis.com/gmail/v1/users/me/messages?maxResults=10&q=${query}`, {
@@ -325,15 +350,19 @@ export class GmailPoller {
       if (!listRes.ok) {
         if (listRes.status === 401) {
           this.cachedAccessToken = null;
+          this.recordPoll('FAILED', { error: 'Gmail API HTTP 401 (access token expired; refreshing on next poll)' });
           return; // expired access token; the next poll refreshes it
         }
-        this.noteFailure(new Error(`Gmail API list request failed (HTTP ${listRes.status}).`));
+        const listErr = new Error(`Gmail API list request failed (HTTP ${listRes.status}).`);
+        this.noteFailure(listErr);
+        this.recordPoll('FAILED', { error: listErr.message });
         return;
       }
       this.noteSuccess();
 
       const listData = await listRes.json();
       const messages = listData.messages || [];
+      let processed = 0;
 
       for (const m of messages) {
         if (this.processedMessageIds.has(m.id)) continue;
@@ -365,6 +394,7 @@ export class GmailPoller {
           });
 
           this.markProcessed(m.id);
+          processed++;
         } catch (msgErr) {
           const emailTimeMs = emailDate && !Number.isNaN(emailDate.getTime()) ? emailDate.getTime() : Date.now();
           if (isFinalSubmissionFailure(msgErr, emailTimeMs)) {
@@ -377,8 +407,10 @@ export class GmailPoller {
           }
         }
       }
+      this.recordPoll(messages.length ? 'MESSAGES_FOUND' : 'NO_MATCHES', { matched: messages.length, processed });
     } catch (err) {
       this.noteFailure(err);
+      this.recordPoll('FAILED', { error: err.message });
     } finally {
       this._isPolling = false;
     }

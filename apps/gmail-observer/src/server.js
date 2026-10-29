@@ -41,7 +41,8 @@ export class GmailObserverServer {
           service: 'gmail-observer',
           isRunning: this.poller.isRunning,
           lastPollAt: this.poller.lastPollAt,
-          observedCount: this.poller.observedCount
+          observedCount: this.poller.observedCount,
+          ...this.poller.getDiagnostics()
         }));
         return;
       }

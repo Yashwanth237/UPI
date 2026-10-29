@@ -260,3 +260,60 @@ describe('Gmail poller message handling', () => {
     }
   });
 });
+
+describe('Gmail poll outcome diagnostics (no Google calls)', () => {
+  const realFetch = globalThis.fetch;
+  const json = (status, body) => ({ ok: status >= 200 && status < 300, status, json: async () => body });
+  after(() => { globalThis.fetch = realFetch; });
+
+  function poller() {
+    const p = new GmailPoller({ apiBaseUrl: 'http://127.0.0.1:9' });
+    p.fetchCredentialsFromPaymentApi = async () => {};
+    return p;
+  }
+
+  test('no stored authorization reports NOT_AUTHORIZED, not a healthy poll', async () => {
+    const p = poller();
+    await p.pollCycle();
+    const d = p.getDiagnostics();
+    assert.equal(d.authorized, false);
+    assert.equal(d.lastPollOutcome, 'NOT_AUTHORIZED');
+  });
+
+  test('a Gmail API error reports FAILED with the HTTP status and no token', async () => {
+    const p = poller();
+    p.getAccessToken = async () => 'secret-access-token';
+    globalThis.fetch = async () => json(500, {});
+    await p.pollCycle();
+    const d = p.getDiagnostics();
+    assert.equal(d.lastPollOutcome, 'FAILED');
+    assert.match(d.lastPollError, /HTTP 500/);
+    assert.ok(!JSON.stringify(d).includes('secret-access-token'));
+  });
+
+  test('an empty search reports NO_MATCHES', async () => {
+    const p = poller();
+    p.setCredentials({ clientId: 'c', clientSecret: 's', refreshToken: 'r' });
+    p.getAccessToken = async () => 'tok';
+    globalThis.fetch = async () => json(200, { messages: [] });
+    await p.pollCycle();
+    const d = p.getDiagnostics();
+    assert.equal(d.authorized, true);
+    assert.equal(d.lastPollOutcome, 'NO_MATCHES');
+    assert.equal(d.lastMatchCount, 0);
+  });
+
+  test('matching messages report MESSAGES_FOUND with matched and processed counts', async () => {
+    const p = poller();
+    p.getAccessToken = async () => 'tok';
+    p.processEmail = async () => ({ accepted: true });
+    globalThis.fetch = async (url) => String(url).includes('/messages/')
+      ? json(200, { payload: { headers: [{ name: 'Subject', value: 'Credit alert' }] }, snippet: 'x', internalDate: String(Date.now()) })
+      : json(200, { messages: [{ id: 'm1' }, { id: 'm2' }] });
+    await p.pollCycle();
+    const d = p.getDiagnostics();
+    assert.equal(d.lastPollOutcome, 'MESSAGES_FOUND');
+    assert.equal(d.lastMatchCount, 2);
+    assert.equal(d.lastProcessedCount, 2);
+  });
+});
