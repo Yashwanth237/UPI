@@ -4892,9 +4892,10 @@
       }
 
       tbody.innerHTML = accounts.map(a => {
-        const statusBadge = a.isActive
+        const statusBadge = (a.isActive
           ? '<span class="badge badge-info" style="font-weight:800; font-size:0.78rem;">● ACTIVE</span>'
-          : '<span class="badge badge-neutral" style="font-size:0.75rem;">Disabled</span>';
+          : '<span class="badge badge-neutral" style="font-size:0.75rem;">Disabled</span>')
+          + (a.isDemo ? ' <span class="badge badge-warning" style="font-size:0.7rem;" title="Placeholder seeded on install. Payments to it do not reach you.">DEMO</span>' : '');
 
         const slotBadge = a.isSlotBusy
           ? '<span class="badge badge-warning" style="font-size:0.7rem;">Slot Busy</span>'
@@ -4966,6 +4967,7 @@
       try {
         const res = await fetch(`${API_BASE}/api/v1/admin/upi-accounts/${accountId}/toggle`, { method: 'POST' });
         if (res.ok) fetchGatewaySettings();
+        else alert((await res.json().catch(() => ({}))).error || 'Failed to change UPI account');
       } catch (e) { }
     }
 
@@ -5468,6 +5470,19 @@
         const tok2 = document.getElementById('smsTokenVal2');
         if (tok1 && data.enrollmentToken) tok1.textContent = data.enrollmentToken;
         if (tok2 && data.enrollmentToken) tok2.textContent = data.enrollmentToken;
+
+        // Warn when the QR carries an address the phone cannot use (localhost or plain HTTP).
+        let warn = document.getElementById('smsPairReachWarn');
+        if (!warn && box.parentElement) {
+          warn = document.createElement('p');
+          warn.id = 'smsPairReachWarn';
+          warn.style.cssText = 'font-size:0.75rem; color:#b45309; margin-top:0.5rem;';
+          box.parentElement.insertBefore(warn, box.nextSibling);
+        }
+        if (warn) {
+          warn.textContent = data.phoneReachabilityWarning || '';
+          warn.style.display = data.phoneReachabilityWarning ? '' : 'none';
+        }
       } catch (e) {
         box.innerHTML = '<span style="font-size:0.75rem; color:#ef4444;">Failed to load QR</span>';
       }

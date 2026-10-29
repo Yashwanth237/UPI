@@ -20,6 +20,7 @@ export class ReceivingAccountRepository {
     const isMerchantEnabled = data.isMerchantEnabled !== undefined ? Boolean(data.isMerchantEnabled) : true;
 
     return this.db.transaction(() => {
+      this.assertVpaNotDuplicate(data.merchantId, data.upiId, id);
       // If this new account is marked active, atomically deactivate all existing active accounts for this merchant
       if (isActive) {
         this.db.execute(`
@@ -75,6 +76,25 @@ export class ReceivingAccountRepository {
     );
     if (!row) return null;
     return this.mapRow(row);
+  }
+
+  /**
+   * Refuses a VPA the merchant already has on another account. Two rows for one VPA would split
+   * its single payment slot in two, letting two open orders share the VPA and its bank alerts.
+   * @param {string} merchantId
+   * @param {string} upiId
+   * @param {string} [exceptAccountId]
+   */
+  assertVpaNotDuplicate(merchantId, upiId, exceptAccountId = '') {
+    const dup = this.db.queryOne(
+      'SELECT id FROM payment_receiving_accounts WHERE merchant_id = ? AND LOWER(upi_id) = LOWER(?) AND id != ? LIMIT 1',
+      [merchantId, String(upiId).trim(), exceptAccountId]
+    );
+    if (dup) {
+      const err = new Error('This UPI ID is already configured for this merchant.');
+      err.code = 'DUPLICATE_VPA';
+      throw err;
+    }
   }
 
   /**
@@ -154,6 +174,7 @@ export class ReceivingAccountRepository {
       if (existing.isSlotBusy && data.upiId !== undefined && upiId !== existing.upiId) {
         throw new Error('Cannot change UPI ID while receiving account slot is currently busy with an active payment session.');
       }
+      if (upiId !== existing.upiId) this.assertVpaNotDuplicate(existing.merchantId, upiId, id);
 
       const payeeName = data.payeeName !== undefined ? data.payeeName.trim() : existing.payeeName;
       const isMerchantEnabled = data.isMerchantEnabled !== undefined ? Boolean(data.isMerchantEnabled) : existing.isMerchantEnabled;
@@ -237,6 +258,7 @@ export class ReceivingAccountRepository {
       if (existing.isSlotBusy && cleanUpi !== existing.upiId) {
         throw new Error('Cannot change UPI ID while receiving account slot is currently busy with an active payment session.');
       }
+      if (cleanUpi !== existing.upiId) this.assertVpaNotDuplicate(merchantId, cleanUpi, existing.id);
       this.db.execute(`
         UPDATE payment_receiving_accounts
         SET upi_id = ?, payee_name = COALESCE(?, payee_name), is_merchant_enabled = ?, updated_at = ?

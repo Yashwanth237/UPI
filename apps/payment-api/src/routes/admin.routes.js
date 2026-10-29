@@ -2,6 +2,7 @@ import crypto from 'node:crypto';
 import { HttpServer } from '../server.js';
 import { PaymentStatus, PaymentMethod, SellingMode, AuditActorType, isValidVpa, toRupeesString, deriveCloudflareRoutes, resolveRuntimeUrls, resolveGmailRedirectUri, createOAuthState, validateOutboundWebhookUrl } from '@youpi/common';
 import { PaymentVerificationPipeline } from '@youpi/core';
+import { DEMO_RECEIVING_VPA } from '@youpi/db';
 import { globalTunnelManager } from '../services/tunnel-manager.js';
 import { formatQrDataUrl } from '../services/whatsapp-berry.service.js';
 
@@ -11,7 +12,7 @@ import { formatQrDataUrl } from '../services/whatsapp-berry.service.js';
  */
 function sendAccountConflict(res, err) {
   const msg = err?.message || '';
-  if (err?.code === 'ACCOUNT_SWITCH_BLOCKED' || msg.startsWith('Cannot change UPI ID while')) {
+  if (err?.code === 'ACCOUNT_SWITCH_BLOCKED' || err?.code === 'DUPLICATE_VPA' || msg.startsWith('Cannot change UPI ID while')) {
     HttpServer.json(res, 409, { error: msg, code: err.code || 'ACCOUNT_BUSY' });
     return true;
   }
@@ -461,6 +462,7 @@ export function registerAdminRoutes(server, ctx) {
         payeeName: a.payeeName,
         isMerchantEnabled: a.isMerchantEnabled,
         isActive: a.isActive,
+        isDemo: a.upiId.toLowerCase() === DEMO_RECEIVING_VPA,
         isSlotBusy: a.isSlotBusy,
         createdAt: a.createdAt,
         updatedAt: a.updatedAt
