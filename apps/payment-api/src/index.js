@@ -1,4 +1,5 @@
 import fs from 'node:fs';
+import os from 'node:os';
 import { EventEmitter } from 'node:events';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -61,11 +62,16 @@ export function createPaymentApp(customDb = null, options = {}) {
   ensureDatabaseInitialized(db);
   const { defaultMerchant } = runMigrations(db);
   const isCustom = !!customDb;
+  // Test apps (custom DB) keep WhatsApp state in a temp dir: a reset deletes these files,
+  // and data/test_whatsapp_session.json is tracked in git.
+  const testBerryDir = isCustom && !options.whatsappBerryService
+    ? fs.mkdtempSync(path.join(os.tmpdir(), 'youpi-berry-test-'))
+    : null;
   const whatsappBerryService = options.whatsappBerryService || (isCustom ? new WhatsAppBerryService({
     sessionId: 'test_berry_session',
-    sessionPath: path.resolve(rootDir, 'data/test_berry_auth'),
-    databasePath: path.resolve(rootDir, 'data/test_berry_store.db'),
-    metaFile: path.resolve(rootDir, 'data/test_whatsapp_session.json')
+    sessionPath: path.join(testBerryDir, 'auth'),
+    databasePath: path.join(testBerryDir, 'store.db'),
+    metaFile: path.join(testBerryDir, 'whatsapp_session.json')
   }) : getWhatsAppBerryService());
 
   const merchantRepo = new MerchantRepository(db);
