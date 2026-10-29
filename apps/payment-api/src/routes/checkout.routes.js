@@ -1543,10 +1543,13 @@ export function registerCheckoutRoutes(server, ctx) {
       server.broadcastSse(session.id, 'status_change', { status: PaymentStatus.EXPIRED });
     }
 
+    // Report the state the session is actually in. Answering EXPIRED unconditionally told a
+    // client that a paid (or still processing) order had expired.
+    const current = ctx.sessionRepo.findById(session.id) || session;
     HttpServer.json(res, 200, {
-      success: true,
-      paymentId: session.id,
-      status: PaymentStatus.EXPIRED
+      success: current.status === PaymentStatus.EXPIRED,
+      paymentId: current.id,
+      status: current.status
     });
   });
 
