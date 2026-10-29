@@ -95,6 +95,8 @@ describe('Google Messages / SMS Payment Observer Integration Tests', () => {
       const json = JSON.parse(res.text);
       assert.equal(json.status, 'UP');
       assert.equal(json.service, 'sms-observer');
+      assert.equal(typeof json.sourceConnected, 'boolean');
+      assert.equal(json.sourceConnected, json.sources.googleMessages.paired);
     });
 
     test('GET / serves an HTML landing page instead of "Route Not Found"', async () => {

@@ -35,13 +35,23 @@ export class SmsObserverServer {
 
       // GET /health
       if (pathname === '/health') {
+        // isRunning only says the poll timer exists; sourceConnected says whether any SMS can arrive.
+        const gm = this.automator.getStatus();
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({
           status: 'UP',
           service: 'sms-observer',
           isRunning: this.service.isRunning,
           lastPollAt: this.service.lastPollAt,
-          observedCount: this.service.observedCount
+          observedCount: this.service.observedCount,
+          sourceConnected: Boolean(gm.isPaired),
+          sources: {
+            googleMessages: {
+              enabled: process.env.ENABLE_LEGACY_CHROME_OBSERVERS === 'true',
+              paired: Boolean(gm.isPaired),
+              mode: gm.mode
+            }
+          }
         }));
         return;
       }
