@@ -437,6 +437,28 @@ export function registerCheckoutRoutes(server, ctx) {
     if ([PaymentStatus.SUCCESS, PaymentStatus.FAILED, PaymentStatus.EXPIRED, PaymentStatus.CANCELLED].includes(session.status)) {
       const merchant = ctx.merchantRepo.findById(session.merchantId);
       const branding = sanitizePublicBranding(merchant?.branding || {});
+      // Receipt details for the success screen, taken only from the stored record: the UTR of
+      // the observation that settled the session, when it completed, and whether that
+      // observation was synthetic (simulator / admin test), so a test SUCCESS is labelled.
+      let receipt = null;
+      if (session.status === PaymentStatus.SUCCESS) {
+        receipt = {
+          utr: null,
+          completedAt: session.completedAt ? session.completedAt.toISOString() : null,
+          livemode: session.method === 'UPI' ? true : null
+        };
+        if (session.attributedObservationId && ctx.db) {
+          try {
+            const obs = ctx.db.queryOne(
+              'SELECT bank_reference_number, raw_payload FROM payment_observations WHERE id = ?',
+              [session.attributedObservationId]
+            );
+            if (obs?.bank_reference_number) receipt.utr = String(obs.bank_reference_number);
+            const raw = typeof obs?.raw_payload === 'string' ? JSON.parse(obs.raw_payload) : (obs?.raw_payload || {});
+            if (raw?.is_test === true || raw?.is_simulated === true) receipt.livemode = false;
+          } catch {}
+        }
+      }
       HttpServer.json(res, 200, {
         id: session.id,
         paymentId: session.id,
@@ -455,6 +477,11 @@ export function registerCheckoutRoutes(server, ctx) {
         // field is already public in the non-terminal payload below, so
         // including it here exposes nothing new.
         returnUrl: session.returnUrl,
+        // Without this the terminal screen fell back to the placeholder "Merchant Name".
+        merchantName: merchant?.businessName || 'Merchant',
+        method: session.method,
+        verificationTag: session.verificationTag,
+        ...(receipt ? { utr: receipt.utr, completedAt: receipt.completedAt, livemode: receipt.livemode } : {}),
         branding
       });
       return;
