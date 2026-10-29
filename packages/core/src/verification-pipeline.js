@@ -488,6 +488,32 @@ export class PaymentVerificationPipeline {
       });
     }
 
+    // Invariant 1b: Reject debit notifications. Same ordering rule as BankSmsParser: a debit
+    // indicator before any credit indicator means money left the account, even when the text
+    // goes on to say the payee was "credited" or the amount "will be credited back". Without
+    // this, the merchant's own outgoing payment or a failed-debit reversal of the same amount
+    // settles whichever order is open on the account.
+    const debitIdx = rawText.search(/\b(?:debited|withdrawn|deducted|spent|paid rs|sent rs)\b/i);
+    const creditIdx = rawText.search(/\b(?:credited|received|deposit|deposited)\b/i);
+    if (debitIdx !== -1 && (creditIdx === -1 || debitIdx < creditIdx)) {
+      stage3 = {
+        stage: 3,
+        name: 'PARSER',
+        status: 'FAILED',
+        reason: 'DEBIT_NOTIFICATION',
+        details: 'Message reports money leaving the account (debit or reversal), not an incoming credit.'
+      };
+      return buildResult({
+        finalStatus: 'REJECTED',
+        failingStage: 3,
+        failingCondition: 'DEBIT_NOTIFICATION',
+        failingReason: stage3.details,
+        stage2,
+        stage3,
+        session
+      });
+    }
+
     // Invariant 2: Check Indian currency indicator (Rs, Rs., ₹, or INR)
     const currencyKeywords = /(?:\b(?:rs\.?|inr)\b|₹|(?:rs\.?|inr|₹)\s*\d|\d\s*(?:rs\.?|inr|₹))/i;
     if (!currencyKeywords.test(rawText)) {
