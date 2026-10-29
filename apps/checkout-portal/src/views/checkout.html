@@ -9,7 +9,7 @@
   <link rel="stylesheet" href="/ui/tokens.css?v=3">
   <title>{{MERCHANT_NAME}} · {{APP_NAME}} Checkout</title>
   <link rel="stylesheet" href="/css/checkout.css">
-  <link rel="stylesheet" href="/css/checkout-theme.css?v=4">
+  <link rel="stylesheet" href="/css/checkout-theme.css?v=5">
   <script>
     // Defined in <head> because icon errors can fire before the main script runs.
     // A missing app logo becomes a plain text label instead of a broken or empty image.
@@ -1498,13 +1498,35 @@
       return headers;
     }
 
+    // SSE events, the 2s fallback poll and the queue poll all call loadState. Requests run one at
+    // a time (a call made meanwhile re-runs once afterwards), so a slow older response can never
+    // overwrite a newer one, and a terminal state from the backend is never replaced by a pending one.
+    let loadStateInFlight = false;
+    let loadStateRerun = false;
+    const isTerminalStatus = s => ['SUCCESS', 'FAILED', 'EXPIRED', 'CANCELLED', 'SUSPICIOUS', 'BLOCKED'].includes(s);
+
     async function loadState() {
+      if (loadStateInFlight) { loadStateRerun = true; return; }
+      loadStateInFlight = true;
+      try {
+        await loadStateOnce();
+      } finally {
+        loadStateInFlight = false;
+        if (loadStateRerun) { loadStateRerun = false; loadState(); }
+      }
+    }
+
+    async function loadStateOnce() {
       try {
         await DeviceIdentity.getOrRegister();
         const headers = getApiHeaders();
 
         const res = await fetch(`${API_BASE}/api/v1/checkout/${PAYMENT_ID}/state`, { headers });
         const data = await res.json().catch(() => ({}));
+
+        if (res.ok && state && isTerminalStatus(state.status) && !isTerminalStatus(data.status)) {
+          return;
+        }
 
         if (res.status === 409 || data.error === 'DUPLICATE_SESSION_DETECTED') {
           renderDuplicateSession(data);
@@ -2040,6 +2062,7 @@
             if (descEl) descEl.textContent = 'Your payment was automatically verified by YouPI PG banking observers.';
             if (codApiBox) codApiBox.style.display = 'none';
           }
+          renderSuccessReceipt(data, isCodOrder);
 
           emitTriggerHook('PAYMENT_COMPLETED', { amount: data.amount, method: data.method, isCod: isCodOrder });
 
@@ -2329,6 +2352,34 @@
         </div>
       `;
       qBanner.style.display = 'block';
+    }
+
+    // --- SUCCESS RECEIPT ---
+    // Fills the order / UTR / time rows from the backend's terminal state only. A value the
+    // backend did not return leaves its row hidden; nothing is inferred on the client.
+    function renderSuccessReceipt(data, isCodOrder) {
+      const setRow = (rowId, valId, value) => {
+        const row = document.getElementById(rowId);
+        const val = document.getElementById(valId);
+        const show = typeof value === 'string' && value.trim() !== '';
+        if (val) val.textContent = show ? value : '';
+        if (row) row.hidden = !show;
+        return show;
+      };
+      let when = '';
+      if (data.completedAt) {
+        const d = new Date(data.completedAt);
+        if (!isNaN(d.getTime())) when = d.toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' });
+      }
+      const shown = [
+        setRow('successRowOrder', 'successOrderVal', data.orderId ? String(data.orderId) : ''),
+        setRow('successRowUtr', 'successUtrVal', !isCodOrder && data.utr ? String(data.utr) : ''),
+        setRow('successRowTime', 'successTimeVal', when)
+      ].some(Boolean);
+      const receipt = document.getElementById('successReceipt');
+      if (receipt) receipt.hidden = !shown;
+      const badge = document.getElementById('successTestBadge');
+      if (badge) badge.hidden = data.livemode !== false;
     }
 
     // --- QR SVG LOADER ---
@@ -2803,8 +2854,10 @@
     }
 
     // Continuous 2-second fallback polling: guarantees instant response when cashier confirms/declines or queues clear
-    setInterval(() => {
-      if (state && (state.status === 'SUCCESS' || state.status === 'FAILED' || state.status === 'EXPIRED' || state.status === 'BLOCKED' || state.isBanned)) {
+    const TERMINAL_STATUSES = ['SUCCESS', 'FAILED', 'EXPIRED', 'CANCELLED', 'SUSPICIOUS', 'BLOCKED'];
+    const fallbackPollTimer = setInterval(() => {
+      if (state && (TERMINAL_STATUSES.includes(state.status) || state.isBanned)) {
+        clearInterval(fallbackPollTimer);
         return;
       }
       loadState();
