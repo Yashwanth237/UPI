@@ -230,8 +230,10 @@ export class CoinWalletStoreServer {
         }
       }
 
-      // REVERSE PROXY: /checkout/*, /icons/*, /css/*, and /js/* -> Checkout Portal (Port 7000)
-      if (pathname.startsWith('/checkout') || pathname.startsWith('/icons/') || pathname.startsWith('/css/') || pathname.startsWith('/js/')) {
+      // REVERSE PROXY: /checkout/*, /icons/*, /css/*, /js/* and /ui/* -> Checkout Portal (Port 7000)
+      // /ui/* carries the checkout's design tokens and self-hosted fonts; without it the
+      // embedded checkout renders in fallback serif fonts with its CSS variables undefined.
+      if (pathname.startsWith('/checkout') || pathname.startsWith('/icons/') || pathname.startsWith('/css/') || pathname.startsWith('/js/') || pathname.startsWith('/ui/')) {
         const portalPort = Number(process.env.CHECKOUT_PORT || 7000);
         const proxyReq = http.request({
           hostname: '127.0.0.1',

@@ -451,6 +451,31 @@ describe('Coin Top-Up Wallet Demo Store Integration Tests', () => {
     assert.notEqual(res.body, 'Route Not Found');
   });
 
+  test('Reverse proxy: every stylesheet, font and icon the embedded checkout loads is reachable through the store', async () => {
+    // The checkout iframe is served from the store's origin, so its /ui/ design tokens and
+    // fonts must be proxied too; a 404 there renders the checkout in fallback serif fonts.
+    const { startCheckoutServer } = await import('../../../checkout-portal/src/index.js');
+    const portal = await startCheckoutServer(7195);
+    const savedPort = process.env.CHECKOUT_PORT;
+    process.env.CHECKOUT_PORT = String(portal.port);
+    try {
+      const page = await request('/checkout/pay_proxy_assets');
+      assert.equal(page.status, 200);
+      const html = String(page.body);
+      const refs = [...new Set([...html.matchAll(/(?:href|src)="(\/(?:ui|css|icons)\/[^"]+)"/g)].map(m => m[1]))];
+      assert.ok(refs.some(r => r.startsWith('/ui/tokens.css')), 'page references the design tokens');
+      assert.ok(refs.some(r => r.startsWith('/ui/fonts/')), 'page references the self-hosted font');
+      for (const ref of refs) {
+        const res = await request(ref);
+        assert.equal(res.status, 200, ref);
+      }
+    } finally {
+      if (savedPort === undefined) delete process.env.CHECKOUT_PORT;
+      else process.env.CHECKOUT_PORT = savedPort;
+      await portal.close();
+    }
+  });
+
   test('GET /css/store.css serves modular stylesheet with proper Content-Type', async () => {
     const res = await request('/css/store.css');
     assert.equal(res.status, 200);
