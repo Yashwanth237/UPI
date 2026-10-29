@@ -183,3 +183,23 @@ Disposable test order: use the store at http://localhost:5000 (Buy Now). Every o
 1. Rebuild the APK with a JDK and Android SDK, install it on the phone that receives the bank's SMS, and pair it over a public HTTPS URL. Or confirm that your bank emails credit alerts to the connected Gmail account.
 2. Make sure the active receiving UPI ID belongs to the account whose alerts that phone or mailbox receives. Do not use `8309601870-5@ybl` ("Jeevan").
 3. Restart `npm run dev`, so that `/api/v1/admin/observations/diagnostics` is live and you can see where the alert stops.
+
+---
+
+## Issue B: blank "Device Security Verification" panel (2026-10-30)
+
+**CHECKOUT UI ROOT CAUSE:** Confirmed. When the first `/state` response is the API's 409 `DUPLICATE_SESSION_DETECTED`, `renderDuplicateSession()` changes the title and unhides `#viewDuplicateSessionContent`. That view sits inside `#paymentGatewayInterface`, which starts hidden with `display: none !important`, and nothing had shown it yet. The view rendered at 0×0. `renderBlockedState()` had the same flaw. This is not a regression from earlier work and is unrelated to the SMS observer or payment API.
+
+**CHECKOUT FILES CHANGED:**
+- `apps/checkout-portal/src/views/checkout.html`: `setGatewayAuthMode(false)` is now called in both renderers, 2 lines plus comments.
+- `apps/checkout-portal/src/__tests__/checkout-status-sync.test.js`: 2 tests that fail without the fix.
+
+**ICONS AND VERIFICATION CONTENT:** With a mocked 409 at http://localhost:5000, the badge, warning icon (inline SVG), title, explanation and "End session & start new payment" button render at 670×413 px. There were no failed CSS, font, image or JS requests. The icons are inline SVG, so no icon library is involved.
+
+**SMS OBSERVER STATUS:** Investigated separately (Issue A above). No shared cause. Uncommitted `apps/sms-observer/*` changes in the working tree belong to other work; I left them alone and did not commit them.
+
+**REGRESSION TESTS:** `npm test`: 53/53 suites passed. `npm run typecheck`: passed. checkout-status-sync: 12/12.
+
+**PAYMENT SECURITY:** Device binding, duplicate-session detection and fraud blocking are unchanged. Only the visibility of their screens was fixed. No verification result is faked.
+
+**NEXT STEP:** Restart `npm run dev`, then reopen the checkout. If the duplicate screen appears, press "End session & start new payment". It means this browser's saved device ID is not registered with the API, or the order is open on another device.
