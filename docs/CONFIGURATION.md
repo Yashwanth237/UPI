@@ -20,9 +20,10 @@
 | `PAYMENT_ACTIVE_WINDOW_MS` | `300000` | Duration of active payment slot (5 minutes = 300,000ms) |
 | `PAYMENT_PROCESSING_WINDOW_MS` | `30000` | Duration of verification slot (30 seconds = 30,000ms) |
 | `LATE_OBSERVATION_WINDOW_MS` | `1800000` | Safety window for matching late observations (30 minutes) |
-| `ANDROID_ENROLLMENT_SECRET` | auto-generated | Secret used to authorize device QR pairing. If unset, a random value is created in `data/.secrets/android_enrollment_secret` |
+| `ANDROID_ENROLLMENT_SECRET` | auto-generated | Key that signs device pairing tokens. If unset, a random value is created in `data/.secrets/android_enrollment_secret`. It is never shown or accepted for pairing itself: the Merchant Admin pairing QR carries a token bound to the merchant that expires after 10 minutes |
 | `ADMIN_API_TOKEN` | auto-generated | Bearer token required by `/api/v1/admin/*` (the Merchant Admin page asks for it once per tab). If unset, a random value is created in `data/.secrets/admin_api_token` |
 | `OBSERVER_API_TOKEN` | auto-generated | Bearer token the local Gmail/SMS observers use to submit observations (`data/.secrets/observer_api_token`) |
+| `SMS_TRUSTED_SENDERS` | unset | Comma-separated bank SMS header codes accepted by payment verification, e.g. `HDFCBK,SBIUPI`. The 2-letter operator prefix (`VM-`, `AD-`) and `-S`/`-T` suffix are ignored. Unset = any sender containing a letter passes. Copy the exact header from a real credit SMS on your phone. A sender ID is a network label, not proof of origin |
 | `COIN_STORE_WEBHOOK_SECRET` | auto-generated | Webhook secret seeded for the default merchant and used by the demo coin store (`data/.secrets/coin_store_webhook_secret`) |
 | `YOUPI_EXPOSE_DEV_OTP` | unset | Set to `true` for local development to get the OTP in the `send-otp` response. Ignored when `NODE_ENV=production` |
 | `YOUPI_ALLOW_DEV_TOOLS` | unset | Developer test-mode / simulator endpoints (`/admin/dev/*`, `simulate-observation`) are refused when `NODE_ENV=production` unless this is `true` |

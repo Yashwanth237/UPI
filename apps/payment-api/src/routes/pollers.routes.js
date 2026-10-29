@@ -13,10 +13,28 @@ const __dirname = path.dirname(__filename);
 /** Upper bound on a single bank notification body accepted by the verification pipeline. */
 const MAX_OBSERVATION_TEXT_CHARS = 64 * 1024;
 
+/**
+ * Pipeline result as returned to an observer. The observer already holds the message it sent,
+ * so the response carries reasons and parsed fields only: echoing the bank message body (and the
+ * fraud evidence package, which repeats it) put full transaction text into client logs and
+ * proxies for no benefit.
+ */
+function redactPipeline(result) {
+  if (!result || typeof result !== 'object') return result;
+  const { raw, ...rest } = result;
+  const stage5 = rest.stages?.stage5;
+  if (stage5 && typeof stage5.details === 'object') {
+    rest.stages = { ...rest.stages, stage5: { ...stage5, details: 'redacted' } };
+  }
+  return rest;
+}
+
 /** Android observer request limits: signed-timestamp window and raw body size. */
 export const ANDROID_SIGNATURE_MAX_AGE_MS = 5 * 60 * 1000;
 export const ANDROID_SIGNATURE_MAX_SKEW_MS = 60 * 1000;
 const ANDROID_MAX_BODY_BYTES = 128 * 1024;
+/** How long a pairing QR / token minted by the admin page stays usable. */
+export const PAIRING_TOKEN_TTL_MS = 10 * 60 * 1000;
 
 /**
  * Registers observation intake routes for SMS Gateway (Android Native Observer)
@@ -34,6 +52,19 @@ const ANDROID_MAX_BODY_BYTES = 128 * 1024;
 export function registerPollerRoutes(server, ctx) {
   // No public fallback: env value, else a random secret persisted in data/.secrets/.
   const enrollmentSecret = resolveSecret('android_enrollment_secret', 'ANDROID_ENROLLMENT_SECRET');
+
+  // Pairing tokens: `yp1.<expiresAtMs>.<hmac>` where hmac = HMAC(enrollmentSecret, merchantId:expiresAt).
+  // The phone treats the token as opaque, so the existing APK pairs with it unchanged (QR or typed).
+  const mintPairingToken = (merchantId, expiresAt) =>
+    `yp1.${expiresAt}.${crypto.createHmac('sha256', enrollmentSecret).update(`${merchantId}:${expiresAt}`).digest('hex')}`;
+  const verifyPairingToken = (token, merchantId) => {
+    const match = /^yp1\.(\d{13})\.([0-9a-f]{64})$/.exec(token);
+    if (!match) return false;
+    const expiresAt = Number(match[1]);
+    const now = Date.now();
+    if (now > expiresAt || expiresAt - now > PAIRING_TOKEN_TTL_MS) return false;
+    return safeEqual(token, mintPairingToken(merchantId, expiresAt));
+  };
 
   // GET /api/v1/pollers/active-window (Enables deep intelligent DOM scanning for active amounts and dual-layer verification)
   server.get('/api/v1/pollers/active-window', async (req, res) => {
@@ -135,7 +166,7 @@ export function registerPollerRoutes(server, ctx) {
         accepted: true,
         observationId: pipeResult.messageId || pipeResult.stages?.stage6?.details?.observationId,
         attribution: pipeResult.stages?.stage6?.details || pipeResult,
-        pipeline: pipeResult
+        pipeline: redactPipeline(pipeResult)
       });
       return;
     }
@@ -146,7 +177,7 @@ export function registerPollerRoutes(server, ctx) {
         status: 'REJECTED',
         reason: pipeResult.failingCondition,
         error: pipeResult.failingReason || pipeResult.details,
-        pipeline: pipeResult
+        pipeline: redactPipeline(pipeResult)
       });
       return;
     }
@@ -182,7 +213,7 @@ export function registerPollerRoutes(server, ctx) {
             reason: 'LATE_OBSERVATION_NO_ACTIVE_SESSION',
             observationId: lateResult?.observationId || pipeResult.messageId,
             error: 'Payment credit was received after the session ended and has been queued for manual reconciliation.',
-            pipeline: pipeResult
+            pipeline: redactPipeline(pipeResult)
           });
         } catch (err) {
           HttpServer.json(res, 400, {
@@ -203,7 +234,7 @@ export function registerPollerRoutes(server, ctx) {
       reason: pipeResult.stages?.stage6?.outcomeStatus || pipeResult.failingCondition || 'UNRESOLVED_OBSERVATION',
       observationId: pipeResult.messageId || pipeResult.stages?.stage6?.details?.observationId,
       error: pipeResult.failingReason || 'Payment observation could not be verified or attributed.',
-      pipeline: pipeResult
+      pipeline: redactPipeline(pipeResult)
     });
   });
 
@@ -215,8 +246,10 @@ export function registerPollerRoutes(server, ctx) {
     const deviceName = body.deviceName || 'Android SMS Gateway';
     const deviceModel = body.deviceModel || 'Android Device';
 
-    // Verify enrollment token against system secret or merchant token
-    if (!token || !safeEqual(String(token), enrollmentSecret)) {
+    // The token must be a pairing token minted by GET pair-qr: bound to this merchant and expiring.
+    // Accepting the long-lived enrollment secret itself let anyone who had ever seen a pairing QR
+    // (a screenshot, a shoulder-surf) pair a new "phone" months later and post signed bank SMS.
+    if (!token || !verifyPairingToken(String(token), merchantId)) {
       HttpServer.json(res, 401, { error: 'Invalid or expired device pairing enrollment token.' });
       return;
     }
@@ -457,7 +490,7 @@ export function registerPollerRoutes(server, ctx) {
         accepted: true,
         observationId: pipeResult.messageId || pipeResult.stages?.stage6?.details?.observationId,
         attribution: pipeResult.stages?.stage6?.details || pipeResult,
-        pipeline: pipeResult
+        pipeline: redactPipeline(pipeResult)
       });
       return;
     }
@@ -469,7 +502,7 @@ export function registerPollerRoutes(server, ctx) {
         status: 'REJECTED',
         reason: pipeResult.failingCondition,
         error: pipeResult.failingReason || pipeResult.details,
-        pipeline: pipeResult
+        pipeline: redactPipeline(pipeResult)
       });
       return;
     }
@@ -496,7 +529,7 @@ export function registerPollerRoutes(server, ctx) {
       reason: pipeResult.stages?.stage6?.outcomeStatus || pipeResult.failingCondition || 'UNRESOLVED_OBSERVATION',
       observationId: pipeResult.messageId || pipeResult.stages?.stage6?.details?.observationId,
       error: pipeResult.failingReason || 'Payment observation could not be verified or attributed.',
-      pipeline: pipeResult
+      pipeline: redactPipeline(pipeResult)
     });
   };
 
@@ -532,9 +565,9 @@ export function registerPollerRoutes(server, ctx) {
     // Canonical runtime URL derivation (Part C2)
     const runtime = resolveRuntimeUrls(merchant?.branding || {});
     const baseUrl = runtime.apiUrl;
-    const token = enrollmentSecret;
     const sessionId = crypto.randomUUID();
-    const expiresAt = Date.now() + (10 * 60 * 1000); // 10 minutes
+    const expiresAt = Date.now() + PAIRING_TOKEN_TTL_MS;
+    const token = mintPairingToken(merchantId, expiresAt);
 
     const pairingPayloadObj = {
       version: 'v1',

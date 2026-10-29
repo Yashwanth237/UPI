@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { Database } from '@youpi/db';
 import { startServer as startPaymentApi } from '../../../apps/payment-api/src/index.js';
 import { AndroidObserverDriver } from '../driver.js';
-import { PaymentStatus, resolveSecret } from '@youpi/common';
+import { PaymentStatus, resolveSecret, getAdminToken } from '@youpi/common';
 
 describe('Android Payment Observer Integration Tests', () => {
   let apiInstance;
@@ -20,6 +20,15 @@ describe('Android Payment Observer Integration Tests', () => {
     });
   });
 
+  // The pairing token the Merchant Admin page shows (and encodes in the pairing QR).
+  async function fetchPairQr() {
+    const res = await fetch(`http://localhost:${apiInstance.port}/api/v1/admin/sms-gateway/pair-qr`, {
+      headers: { Authorization: `Bearer ${getAdminToken()}` }
+    });
+    assert.equal(res.status, 200);
+    return res.json();
+  }
+
   after(async () => {
     driver.stopHeartbeat();
     await apiInstance.close();
@@ -33,9 +42,21 @@ describe('Android Payment Observer Integration Tests', () => {
     );
   });
 
-  test('successfully pairs Android device with valid enrollment token', async () => {
+  test('rejects the long-lived enrollment secret itself; only a minted pairing token pairs', async () => {
     const enrollmentSecret = resolveSecret('android_enrollment_secret', 'ANDROID_ENROLLMENT_SECRET');
-    const pairResult = await driver.pair(enrollmentSecret);
+    await assert.rejects(() => driver.pair(enrollmentSecret), /Device pairing failed/);
+  });
+
+  test('rejects an expired or tampered pairing token', async () => {
+    const qr = await fetchPairQr();
+    const [, exp, mac] = qr.enrollmentToken.split('.');
+    await assert.rejects(() => driver.pair(`yp1.${Number(exp) - 11 * 60 * 1000}.${mac}`), /Device pairing failed/);
+    await assert.rejects(() => driver.pair(qr.enrollmentToken, '00000000-0000-0000-0000-0000000000ff'), /Device pairing failed/);
+  });
+
+  test('successfully pairs Android device with valid enrollment token', async () => {
+    const qr = await fetchPairQr();
+    const pairResult = await driver.pair(qr.enrollmentToken);
 
     assert.ok(pairResult.paired);
     assert.ok(pairResult.deviceId);
