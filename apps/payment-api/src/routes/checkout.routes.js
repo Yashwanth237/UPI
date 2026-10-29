@@ -1651,7 +1651,10 @@ export function registerCheckoutRoutes(server, ctx) {
       paymentSessionId: session.id,
       receivingAccountId: session.receivingAccountId,
       isTest: Boolean(body.isTest),
-      testModeActive: Boolean(body.testModeActive)
+      testModeActive: Boolean(body.testModeActive),
+      // The text here is always typed by an operator, never a forwarded bank alert. Marking it
+      // keeps any SUCCESS it produces flagged livemode:false in the merchant webhook.
+      isSimulated: true
     });
 
     if (result.status === 'REJECTED' && result.failingCondition === 'FRAUDULENT_PAYMENT_INJECTION') {

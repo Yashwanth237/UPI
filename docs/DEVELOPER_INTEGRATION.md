@@ -149,10 +149,12 @@ The only authoritative confirmation of payment is the **HMAC-SHA256 signed serve
     "currency": "INR",
     "method": "UPI",
     "utr": "123456789012",
+    "livemode": true,
     "completedAt": "2026-10-07T12:00:00.000Z",
     "metadata": { "sku": "SUBSCRIPTION-YEARLY" }
   }
   ```
+- **`livemode`** (also header `X-Gateway-Livemode`): `false` when the payment was settled by a synthetic message (the developer simulator or an admin test observation). Never fulfil an order from a `livemode: false` webhook.
 
 ### Verification Security Invariants:
 - **Raw Body Required**: Consumers **MUST** compute the HMAC over raw, unparsed request bytes. Never parse JSON before HMAC calculation.

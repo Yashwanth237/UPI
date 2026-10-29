@@ -78,13 +78,18 @@ export class WebhookEngine {
     // session row. Merchants need it to reconcile a webhook against their bank
     // statement, and it is part of the documented webhook contract.
     let utr = session.utr || session.bankReferenceNumber || session.bank_reference_number || '';
-    if (!utr && session.attributedObservationId) {
+    // livemode:false marks a payment settled by a synthetic message (developer simulator or an
+    // admin test observation) so a merchant never fulfils an order from a test SUCCESS.
+    let livemode = true;
+    if (session.attributedObservationId) {
       try {
         const obsRow = this.db.queryOne(
-          'SELECT bank_reference_number FROM payment_observations WHERE id = ?',
+          'SELECT bank_reference_number, raw_payload FROM payment_observations WHERE id = ?',
           [session.attributedObservationId]
         );
-        if (obsRow?.bank_reference_number) utr = obsRow.bank_reference_number;
+        if (!utr && obsRow?.bank_reference_number) utr = obsRow.bank_reference_number;
+        const raw = typeof obsRow?.raw_payload === 'string' ? JSON.parse(obsRow.raw_payload) : (obsRow?.raw_payload || {});
+        if (raw?.is_test === true || raw?.is_simulated === true) livemode = false;
       } catch {}
     }
 
@@ -104,6 +109,7 @@ export class WebhookEngine {
       currency: session.currency || 'INR',
       method: session.method || 'UPI',
       utr: String(utr || ''),
+      livemode,
       verificationTag: session.verificationTag || session.verification_tag || (session.method === 'COD' ? 'COD_ORDER_PLACED' : 'UNVERIFIED'),
       verificationLevel: session.verificationLevel != null ? Number(session.verificationLevel) : (session.verification_level != null ? Number(session.verification_level) : (session.method === 'COD' ? 1 : 0)),
       completedAt: session.completedAt ? (typeof session.completedAt.toISOString === 'function' ? session.completedAt.toISOString() : String(session.completedAt)) : new Date().toISOString(),
@@ -120,7 +126,8 @@ export class WebhookEngine {
       'X-Gateway-Signature': `sha256=${signature}`,
       'X-Gateway-Signature-V2': `sha256=${timestampedSignature}`,
       'X-Gateway-Delivery-Id': deliveryId,
-      'X-Gateway-Timestamp': timestamp
+      'X-Gateway-Timestamp': timestamp,
+      'X-Gateway-Livemode': String(livemode)
     };
 
     let responseStatus = null;
