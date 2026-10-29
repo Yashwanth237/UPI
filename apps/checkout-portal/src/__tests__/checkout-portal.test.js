@@ -121,12 +121,12 @@ describe('Checkout Portal Integration Tests', () => {
       assert.deepEqual(frameAncestorOrigins('https://user:pass@x.test'), []);
     });
 
-    test('GET /checkout/:id/qr.svg returns dynamic SVG image', async () => {
+    test('GET /checkout/:id/qr.svg does not invent a QR for an unknown session', async () => {
+      // The QR for an ACTIVE session is covered in checkout-qr-and-layout.test.js.
       const res = await get('/checkout/pay_test_uuid_12345/qr.svg');
-      assert.equal(res.status, 200);
-      assert.ok(res.headers['content-type'].includes('image/svg+xml'));
-      assert.ok(res.text.includes('<svg'));
-      assert.ok(res.text.includes('</svg>'));
+      assert.equal(res.status, 409);
+      assert.ok(!res.text.includes('<svg'));
+      assert.equal(JSON.parse(res.text).error, 'QR_NOT_AVAILABLE');
     });
 
     test('GET /icons/:filename returns official Play Store icons with correct MIME type', async () => {

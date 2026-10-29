@@ -162,6 +162,47 @@ body, button, input, select, textarea { font-family: var(--font-sans); }
   image-rendering: pixelated; /* keeps QR modules crisp when scaled */
 }
 .ypg-qr-prompt-title { font-family: var(--font-display); font-weight: 600; }
+/* Larger QR on desktop so a phone camera can scan it from a normal distance. */
+@media (min-width: 769px) {
+  .ypg-qr-image-box { width: 172px; height: 172px; }
+}
+.ypg-qr-message {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  font-size: 11px;
+  line-height: 1.35;
+  color: var(--color-text-muted, #64748b);
+  text-align: center;
+}
+.ypg-qr-retry {
+  font: inherit;
+  font-weight: 600;
+  padding: 4px 12px;
+  border-radius: 8px;
+  border: 1px solid var(--color-border, #e2e8f0);
+  background: #ffffff;
+  color: var(--color-text, #0f172a);
+  cursor: pointer;
+}
+.ypg-qr-retry:focus-visible { outline: 2px solid #2563eb; outline-offset: 2px; }
+/* Text label shown when an app logo fails to load. */
+.ypg-icon-text-fallback {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 100%;
+  min-width: 22px;
+  font-size: 6.5px;
+  font-weight: 700;
+  line-height: 1;
+  color: #334155;
+  text-align: center;
+  overflow: hidden;
+  word-break: break-word;
+}
 
 /* ---------- Instructions, cards, dialogs ---------- */
 .ypg-instructions-card,

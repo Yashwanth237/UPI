@@ -9,25 +9,41 @@
   <link rel="stylesheet" href="/ui/tokens.css?v=3">
   <title>{{MERCHANT_NAME}} · {{APP_NAME}} Checkout</title>
   <link rel="stylesheet" href="/css/checkout.css">
-  <link rel="stylesheet" href="/css/checkout-theme.css?v=3">
+  <link rel="stylesheet" href="/css/checkout-theme.css?v=4">
+  <script>
+    // Defined in <head> because icon errors can fire before the main script runs.
+    // A missing app logo becomes a plain text label instead of a broken or empty image.
+    function ypgIconFallback(img) {
+      if (!img || !img.parentNode) return;
+      const label = document.createElement('span');
+      label.className = 'ypg-icon-text-fallback';
+      label.textContent = img.alt || 'UPI';
+      label.title = img.alt || 'UPI app';
+      img.replaceWith(label);
+    }
+  </script>
 </head>
 
 <body>
 
-  <!-- include:partials/splash.html -->
+  <!-- TOAST NOTIFICATION -->
+  <div id="ypgToast" class="ypg-toast"><img src="/icons/upi.svg" alt="UPI" style="height:12px; vertical-align:middle; filter:brightness(0) invert(1); margin-right:4px;" /> Direct UPI QR is active for instant banking verification</div>
 
   <!-- YOUPI PG CHECKOUT CARD / DRAWER WRAPPER -->
   <div class="ypg-wrapper">
 
+    <!-- include:partials/splash.html -->
+
     <!-- include:partials/sidebar.html -->
 
+    <!-- header.html opens .ypg-pc-workspace; footer.html closes it, so the body and footer sit inside it. -->
     <!-- include:partials/header.html -->
 
     <!-- 3. SCROLLABLE BODY -->
-    <div class="ypg-body">
+    <main class="ypg-body">
       <!-- include:partials/auth.html -->
       <!-- include:partials/payment-methods.html -->
-    </div>
+    </main>
 
     <!-- include:partials/footer.html -->
 
@@ -1811,7 +1827,7 @@
       const upiCardContainer = document.querySelector('.ypg-qr-card-container');
       if (upiCardContainer) upiCardContainer.style.display = 'flex';
       const qrContainerBox = document.getElementById('qrImageContainer');
-      if (qrContainerBox && (!qrContainerBox.querySelector('svg') || qrContainerBox.textContent.includes('Loading QR'))) {
+      if (data.status === 'ACTIVE' && qrContainerBox && !qrContainerBox.querySelector('svg')) {
         loadQrSvg();
       }
 
@@ -2315,34 +2331,62 @@
       qBanner.style.display = 'block';
     }
 
-    // --- PURE QR SVG LOADER (ALWAYS LOADS & SHOWS QR CODE REGARDLESS OF SERVER STATUS) ---
+    // --- QR SVG LOADER ---
+    // The server only returns a QR for an ACTIVE session (409 otherwise), so a failure here
+    // is shown as a message with a retry button rather than an empty white box.
+    let qrLoadInFlight = false;
+    let qrRetryTimer = null;
+    let qrAutoRetries = 0;
+    const QR_MAX_AUTO_RETRIES = 3;
+
+    function showQrMessage(container, text, withRetry) {
+      container.replaceChildren();
+      const box = document.createElement('div');
+      box.className = 'ypg-qr-message';
+      box.setAttribute('role', withRetry ? 'alert' : 'status');
+      const msg = document.createElement('div');
+      msg.textContent = text;
+      box.appendChild(msg);
+      if (withRetry) {
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'ypg-qr-retry';
+        btn.textContent = 'Retry';
+        btn.addEventListener('click', () => { qrAutoRetries = 0; loadQrSvg(); });
+        box.appendChild(btn);
+      }
+      container.appendChild(box);
+    }
+
     async function loadQrSvg() {
       const container = document.getElementById('qrImageContainer');
-      if (!container) return;
+      if (!container || qrLoadInFlight) return;
+      qrLoadInFlight = true;
+      clearTimeout(qrRetryTimer);
+      if (!container.querySelector('svg')) showQrMessage(container, 'Loading QR...', false);
       try {
-        const res = await fetch(`/checkout/${PAYMENT_ID}/qr.svg`);
-        if (res.ok) {
-          const svg = await res.text();
-          if (svg && svg.includes('<svg')) {
-            container.innerHTML = svg;
-            return;
-          }
+        const res = await fetch(`/checkout/${PAYMENT_ID}/qr.svg`, { cache: 'no-store' });
+        const svg = res.ok ? await res.text() : '';
+        if (svg && svg.trim().startsWith('<svg')) {
+          container.innerHTML = svg;
+          container.setAttribute('role', 'img');
+          container.setAttribute('aria-label', 'UPI payment QR code');
+          qrAutoRetries = 0;
+          return;
         }
+        throw new Error(`QR request failed (HTTP ${res.status})`);
       } catch (e) {
         console.warn('loadQrSvg error:', e);
+        if (qrAutoRetries < QR_MAX_AUTO_RETRIES) {
+          qrAutoRetries += 1;
+          showQrMessage(container, 'Loading QR...', false);
+          qrRetryTimer = setTimeout(loadQrSvg, 800 * 2 ** (qrAutoRetries - 1));
+        } else {
+          showQrMessage(container, 'Could not load the payment QR. Check your connection and retry.', true);
+        }
+      } finally {
+        qrLoadInFlight = false;
       }
-      // Automatic retry to guarantee QR code is loaded
-      setTimeout(async () => {
-        try {
-          const res = await fetch(`/checkout/${PAYMENT_ID}/qr.svg`);
-          if (res.ok) {
-            const svg = await res.text();
-            if (svg && svg.includes('<svg')) {
-              container.innerHTML = svg;
-            }
-          }
-        } catch (e) {}
-      }, 400);
     }
 
     function copyVpaId() {

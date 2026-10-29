@@ -36,14 +36,10 @@
                 </div>
                 <div class="ypg-pc-method-sub">Scan &amp; Pay via UPI Apps</div>
                 <div class="ypg-pc-method-icons">
-                  <img class="ypg-pc-mini-icon" src="/icons/gpay.png"
-                    onerror="if(window.FALLBACK_ICONS)this.src=window.FALLBACK_ICONS.gpay" alt="GPay" />
-                  <img class="ypg-pc-mini-icon" src="/icons/phonepe.png"
-                    onerror="if(window.FALLBACK_ICONS)this.src=window.FALLBACK_ICONS.phonepe" alt="PhonePe" />
-                  <img class="ypg-pc-mini-icon" src="/icons/paytm.png"
-                    onerror="if(window.FALLBACK_ICONS)this.src=window.FALLBACK_ICONS.paytm" alt="Paytm" />
-                  <img class="ypg-pc-mini-icon" src="/icons/cred.png"
-                    onerror="if(window.FALLBACK_ICONS)this.src=window.FALLBACK_ICONS.cred" alt="CRED" />
+                  <img class="ypg-pc-mini-icon" src="/icons/gpay.png" onerror="ypgIconFallback(this)" alt="GPay" />
+                  <img class="ypg-pc-mini-icon" src="/icons/phonepe.png" onerror="ypgIconFallback(this)" alt="PhonePe" />
+                  <img class="ypg-pc-mini-icon" src="/icons/paytm.png" onerror="ypgIconFallback(this)" alt="Paytm" />
+                  <img class="ypg-pc-mini-icon" src="/icons/cred.png" onerror="ypgIconFallback(this)" alt="CRED" />
                 </div>
               </div>
 
@@ -150,19 +146,13 @@
                     <!-- Brand Logos Row (Zero Fake Offers) -->
                     <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap; margin:3px 0 6px 0;">
                       <div class="ypg-upi-logos-row">
-                        <div class="ypg-app-icon" title="Google Pay"><img src="/icons/gpay.png"
-                            onerror="if(window.FALLBACK_ICONS)this.src=window.FALLBACK_ICONS.gpay" alt="GPay" /></div>
-                        <div class="ypg-app-icon" title="PhonePe"><img src="/icons/phonepe.png"
-                            onerror="if(window.FALLBACK_ICONS)this.src=window.FALLBACK_ICONS.phonepe" alt="PhonePe" />
+                        <div class="ypg-app-icon" title="Google Pay"><img src="/icons/gpay.png" onerror="ypgIconFallback(this)" alt="GPay" /></div>
+                        <div class="ypg-app-icon" title="PhonePe"><img src="/icons/phonepe.png" onerror="ypgIconFallback(this)" alt="PhonePe" />
                         </div>
-                        <div class="ypg-app-icon" title="Paytm"><img src="/icons/paytm.png"
-                            onerror="if(window.FALLBACK_ICONS)this.src=window.FALLBACK_ICONS.paytm" alt="Paytm" /></div>
-                        <div class="ypg-app-icon" title="CRED"><img src="/icons/cred.png"
-                            onerror="if(window.FALLBACK_ICONS)this.src=window.FALLBACK_ICONS.cred" alt="CRED" /></div>
-                        <div class="ypg-app-icon" title="BHIM UPI"><img src="/icons/bhim.png"
-                            onerror="if(window.FALLBACK_ICONS)this.src=window.FALLBACK_ICONS.bhim" alt="BHIM" /></div>
-                        <div class="ypg-app-icon" title="Amazon Pay"><img src="/icons/amazonpay.png"
-                            onerror="if(window.FALLBACK_ICONS)this.src=window.FALLBACK_ICONS.amazonpay"
+                        <div class="ypg-app-icon" title="Paytm"><img src="/icons/paytm.png" onerror="ypgIconFallback(this)" alt="Paytm" /></div>
+                        <div class="ypg-app-icon" title="CRED"><img src="/icons/cred.png" onerror="ypgIconFallback(this)" alt="CRED" /></div>
+                        <div class="ypg-app-icon" title="BHIM UPI"><img src="/icons/bhim.png" onerror="ypgIconFallback(this)" alt="BHIM" /></div>
+                        <div class="ypg-app-icon" title="Amazon Pay"><img src="/icons/amazonpay.png" onerror="ypgIconFallback(this)"
                             alt="Amazon Pay" /></div>
                       </div>
                     </div>
@@ -532,4 +522,4 @@
             </div>
 
           </div>
-      </main>
+        </div><!-- END paymentGatewayInterface -->

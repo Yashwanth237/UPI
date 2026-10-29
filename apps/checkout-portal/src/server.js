@@ -434,7 +434,20 @@ export class CheckoutServer {
       if (qrMatch) {
         const paymentId = qrMatch[1];
         const state = await this.fetchPaymentState(paymentId);
-        const upiUri = state?.upiUri || `upi://pay?pa=${encodeURIComponent(state?.payeeVpa || 'merchant@upi')}&pn=${encodeURIComponent(state?.merchantName || 'Store')}&am=${encodeURIComponent(state?.amount || '100.00')}&tn=${encodeURIComponent(paymentId)}`;
+        // Only the payment API's own upi://pay URI may be encoded: it is built for an ACTIVE
+        // session from the receiving account, the exact amount and the order reference.
+        // Never invent one (placeholder VPA or amount) when the state is missing or not ACTIVE.
+        const upiUri = typeof state?.upiUri === 'string' ? state.upiUri : '';
+        if (state?.status !== 'ACTIVE' || !/^upi:\/\/pay\?/i.test(upiUri)) {
+          res.writeHead(409, {
+            'Content-Type': 'application/json',
+            'Cache-Control': 'no-store, no-cache, must-revalidate, proxy-revalidate, max-age=0',
+            'Access-Control-Allow-Origin': '*',
+            ...BASE_SECURITY_HEADERS
+          });
+          res.end(JSON.stringify({ error: 'QR_NOT_AVAILABLE', status: state?.status || null }));
+          return;
+        }
 
         const svg = generateQrSvg(upiUri, 220);
         res.writeHead(200, {
