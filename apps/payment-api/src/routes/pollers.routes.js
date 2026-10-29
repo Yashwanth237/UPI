@@ -29,6 +29,26 @@ function redactPipeline(result) {
   return rest;
 }
 
+/**
+ * Whether a paired phone can reach `url`. The observer APK refuses cleartext except to loopback
+ * and the emulator host (network_security_config.xml), so a physical phone needs an https:// URL
+ * on a host that is not localhost.
+ * @param {string} url
+ * @returns {{ ok: boolean, warning: string | null }}
+ */
+export function assessPhoneReachability(url) {
+  let parsed;
+  try { parsed = new URL(url); } catch { return { ok: false, warning: 'The gateway API URL is not a valid URL.' }; }
+  const host = parsed.hostname.toLowerCase();
+  if (host === 'localhost' || host.endsWith('.localhost') || /^127\./.test(host) || host === '[::1]' || host === '0.0.0.0') {
+    return { ok: false, warning: `The pairing QR points at ${parsed.origin}, which on the phone means the phone itself. Set a public HTTPS API address (for example a Cloudflare Tunnel) before pairing.` };
+  }
+  if (parsed.protocol !== 'https:') {
+    return { ok: false, warning: `The pairing QR uses plain HTTP (${parsed.origin}). The observer app only connects over HTTPS; use an HTTPS address.` };
+  }
+  return { ok: true, warning: null };
+}
+
 /** Android observer request limits: signed-timestamp window and raw body size. */
 export const ANDROID_SIGNATURE_MAX_AGE_MS = 5 * 60 * 1000;
 export const ANDROID_SIGNATURE_MAX_SKEW_MS = 60 * 1000;
@@ -146,7 +166,8 @@ export function registerPollerRoutes(server, ctx) {
       bankReferenceNumber: body.bankReferenceNumber || body.utr,
       // Test flags relax verification: honour them only for the admin credential, never for observers.
       isTest: Boolean(body.isTest) && isAdminRequest(req),
-      testModeActive: Boolean(body.testModeActive) && isAdminRequest(req)
+      testModeActive: Boolean(body.testModeActive) && isAdminRequest(req),
+      isSimulated: Boolean(body.isTest) && isAdminRequest(req)
     });
 
     if (pipeResult.status === 'REJECTED' && pipeResult.failingCondition === 'FRAUDULENT_PAYMENT_INJECTION') {
@@ -583,6 +604,10 @@ export function registerPollerRoutes(server, ctx) {
       expiresAt
     };
 
+    // The observer app only speaks HTTPS to anything but the emulator/loopback, and the phone's
+    // own "localhost" is the phone. Say so here instead of letting pairing fail on the device.
+    const phoneReach = assessPhoneReachability(baseUrl);
+
     const pairingPayload = JSON.stringify(pairingPayloadObj);
     const qrSvg = generateQrSvg(pairingPayload, 260);
 
@@ -623,6 +648,8 @@ export function registerPollerRoutes(server, ctx) {
       enrollmentToken: token,
       gatewayUrl: baseUrl,
       serverUrl: baseUrl,
+      phoneReachable: phoneReach.ok,
+      phoneReachabilityWarning: phoneReach.warning,
       devices
     });
   });
