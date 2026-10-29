@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import { Database } from '@youpi/db';
 import { PaymentStatus } from '@youpi/common';
 import { startServer as startPaymentApi } from '../index.js';
-import { TEST_OBSERVER_TOKEN } from '../../../../scripts/test-support.js';
+import { TEST_OBSERVER_TOKEN, TEST_ADMIN_TOKEN } from '../../../../scripts/test-support.js';
 
 // End-to-end payment detection scenarios against the real HTTP API, an in-memory SQLite
 // database, the verification pipeline and the attribution engine. Every bank message here is
@@ -246,6 +246,31 @@ describe('Payment detection scenarios (create → observe → settle)', () => {
     assert.equal(statusOf(id), PaymentStatus.SUCCESS);
     assert.equal((await observe(sms)).body.accepted, false);
     assert.equal(statusOf(id), PaymentStatus.SUCCESS);
+  });
+
+  test('repeated views of an expired checkout record its terminal hook once and send one webhook', async () => {
+    const id = await createActivePayment('DET-REVIEW-EXPIRED', '166.00');
+    assert.equal((await call(`/api/v1/checkout/${id}/expire`, { method: 'POST' })).status, 200);
+    assert.equal(statusOf(id), PaymentStatus.EXPIRED);
+
+    const hook = () => call(`/api/v1/checkout/${id}/trigger-hook`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${TEST_ADMIN_TOKEN}` },
+      body: { action: 'PAYMENT_FAILED', details: { status: 'EXPIRED' } }
+    });
+    const first = await hook();
+    assert.equal(first.status, 200, JSON.stringify(first.body));
+    const second = await hook();
+    const third = await hook();
+    assert.equal(second.status, 200);
+    assert.equal(second.body.duplicate, true);
+    assert.equal(third.body.duplicate, true);
+
+    const hookRows = api.app.context.auditRepo.findByEntity('PAYMENT_SESSION', id).filter(e => e.action === 'HOOK_PAYMENT_FAILED');
+    assert.equal(hookRows.length, 1);
+    const webhooks = db.query("SELECT event_type FROM webhook_deliveries WHERE payment_id = ? AND event_type = 'EXPIRED'", [id]);
+    assert.ok(webhooks.length <= 1, `expected at most one EXPIRED webhook, got ${webhooks.length}`);
+    assert.equal(statusOf(id), PaymentStatus.EXPIRED);
   });
 
   test('unknown payment ids return 404', async () => {

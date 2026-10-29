@@ -1619,12 +1619,26 @@ export function registerCheckoutRoutes(server, ctx) {
       return;
     }
 
+    // A finished session's page re-sends its terminal hook on every view; record it once.
+    const hookAction = `HOOK_${action || 'USER_ACTION'}`;
+    const isTerminal = [PaymentStatus.SUCCESS, PaymentStatus.FAILED, PaymentStatus.EXPIRED, PaymentStatus.CANCELLED, PaymentStatus.SUSPICIOUS].includes(session.status);
+    if (isTerminal && ctx.auditRepo &&
+        ctx.auditRepo.findByEntity('PAYMENT_SESSION', session.id).some(entry => entry.action === hookAction)) {
+      HttpServer.json(res, 200, {
+        success: true,
+        action: action || 'ACTION',
+        duplicate: true,
+        timestamp: new Date().toISOString()
+      });
+      return;
+    }
+
     if (ctx.auditRepo) {
       ctx.auditRepo.log({
         merchantId: session.merchantId,
         entityType: 'PAYMENT_SESSION',
         entityId: session.id,
-        action: `HOOK_${action || 'USER_ACTION'}`,
+        action: hookAction,
         actorType: 'CUSTOMER',
         details: details || {}
       });
