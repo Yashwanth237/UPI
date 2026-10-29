@@ -213,12 +213,9 @@ export class GmailPoller {
 
   async resolveActiveReceivingAccount() {
     try {
-      const res = await fetch(`${this.apiBaseUrl}/api/v1/pollers/active-window`, { signal: AbortSignal.timeout(1000) });
-      if (res.ok) {
-        const data = await res.json();
-        if (data.sessions && data.sessions.length > 0) {
-          return data.sessions[0].receivingAccountId;
-        }
+      const sessions = await this.observerClient.getActiveWindow();
+      if (sessions && sessions.length > 0) {
+        return sessions[0].receivingAccountId;
       }
     } catch {}
     return null;
