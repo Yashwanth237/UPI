@@ -11,6 +11,27 @@ import { CustomerRepository } from './repositories/customer.repository.js';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
+/** The placeholder receiving account seeded on a fresh install. Never a real payee. */
+export const DEMO_RECEIVING_ACCOUNT_ID = '00000000-0000-0000-0000-000000000002';
+export const DEMO_RECEIVING_VPA = 'merchant@upi';
+
+function seedDefaultMerchant(merchantRepo) {
+  return merchantRepo.create({
+    id: '00000000-0000-0000-0000-000000000001',
+    businessName: 'YOUPI Demo Store',
+    slug: 'demo-store',
+    contactEmail: 'merchant@youpi.local',
+    contactPhone: '9876543210',
+    webhookUrl: process.env.COIN_STORE_WEBHOOK_URL || 'http://localhost:5000/api/webhook',
+    webhookSecret: getCoinStoreWebhookSecret(),
+    branding: {
+      appName: 'YOUPI PG',
+      primaryColor: '#2563eb',
+      logoUrl: null
+    }
+  });
+}
+
 /**
  * Numbered schema migrations. Append only; never renumber or remove an entry.
  * 1: everything up to and including the 10 original table groups (pre-ledger installs).
@@ -137,22 +158,20 @@ export function runMigrations(targetDb) {
   const merchantRepo = new MerchantRepository(db);
   const existing = merchantRepo.findAll();
 
+  // Seeding is check-then-insert, and every service runs these migrations on start. On a fresh
+  // database started by several services at once, two processes can both see "empty" and both
+  // insert the fixed seed id; the loser hit UNIQUE constraint failed and crashed. The seed rows
+  // have fixed ids, so losing that race just means another process already seeded: re-read.
+  const isSeedRace = err => /UNIQUE constraint failed/.test(err?.message || '');
+
   let defaultMerchant;
   if (existing.length === 0) {
-    defaultMerchant = merchantRepo.create({
-      id: '00000000-0000-0000-0000-000000000001',
-      businessName: 'YOUPI Demo Store',
-      slug: 'demo-store',
-      contactEmail: 'merchant@youpi.local',
-      contactPhone: '9876543210',
-      webhookUrl: process.env.COIN_STORE_WEBHOOK_URL || 'http://localhost:5000/api/webhook',
-      webhookSecret: getCoinStoreWebhookSecret(),
-      branding: {
-        appName: 'YOUPI PG',
-        primaryColor: '#2563eb',
-        logoUrl: null
-      }
-    });
+    try {
+      defaultMerchant = seedDefaultMerchant(merchantRepo);
+    } catch (err) {
+      if (!isSeedRace(err)) throw err;
+      defaultMerchant = merchantRepo.findAll()[0];
+    }
   } else {
     defaultMerchant = existing[0];
     if (!defaultMerchant.webhookSecret) {
@@ -171,13 +190,17 @@ export function runMigrations(targetDb) {
   const accountRepo = new ReceivingAccountRepository(db);
   const accounts = accountRepo.findByMerchantId(defaultMerchant.id);
   if (accounts.length === 0) {
-    accountRepo.create({
-      id: '00000000-0000-0000-0000-000000000002',
-      merchantId: defaultMerchant.id,
-      upiId: 'merchant@upi',
-      payeeName: defaultMerchant.businessName,
-      isActive: true
-    });
+    try {
+      accountRepo.create({
+        id: DEMO_RECEIVING_ACCOUNT_ID,
+        merchantId: defaultMerchant.id,
+        upiId: DEMO_RECEIVING_VPA,
+        payeeName: defaultMerchant.businessName,
+        isActive: true
+      });
+    } catch (err) {
+      if (!isSeedRace(err)) throw err;
+    }
   }
 
   // Demo customer seeding is opt-in and never carries real personal data.

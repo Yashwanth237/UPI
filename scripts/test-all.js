@@ -7,6 +7,7 @@ const testFiles = [
   'packages/db/src/__tests__/db.test.js',
   'packages/db/src/__tests__/schema-parity.test.js',
   'packages/db/src/__tests__/migration-ledger.test.js',
+  'packages/db/src/__tests__/seed-race.test.js',
   'packages/core/src/__tests__/core.test.js',
   'packages/core/src/__tests__/queue-timing.test.js',
   'packages/core/src/__tests__/queue-fairness.test.js',
