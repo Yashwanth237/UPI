@@ -103,6 +103,53 @@ describe('Checkout status synchronisation and success receipt', () => {
     });
   });
 
+  describe('duplicate-session and blocked screens on the first state response', () => {
+    // Both panels start hidden. If the first answer is a 409 duplicate session (or a block),
+    // the screen must still be visible, not a 0x0 view inside a hidden panel.
+    function run(fnName) {
+      const authFn = slice('    function setGatewayAuthMode', '\n    function ');
+      const target = slice(`    function ${fnName}`, '\n    function ');
+      const ids = ['preGatewayAuthView', 'paymentGatewayInterface', 'ypgStickyFooter', 'paymentMethodSelectorBar',
+        'viewDuplicateSessionContent', 'viewBlockedContent', 'pcMethodsList'];
+      const els = Object.fromEntries(ids.map(id => [id, {
+        id, hidden: true, textContent: '',
+        style: { display: '', props: {}, setProperty(k, v) { this.props[k] = v; }, removeProperty(k) { delete this.props[k]; } }
+      }]));
+      els.paymentGatewayInterface.style.props.display = 'none';
+      const topbar = { textContent: 'Sign in to Pay' };
+      const document = {
+        getElementById: id => els[id] || null,
+        querySelector: sel => (sel === '.ypg-pc-topbar-title' ? topbar : (sel === '.ypg-pc-active-view' ? { style: {} } : null)),
+        querySelectorAll: () => []
+      };
+      const noop = () => {};
+      vm.runInNewContext(`${authFn}\n${target}\n${fnName}({ session_id: 'pay_1' });`, {
+        document, PAYMENT_ID: 'pay_1', state: null, countdownTimer: null, queuePollTimer: null, sse: null,
+        lastDuplicateSessionPayload: null, hideAllContent: noop, emitTriggerHook: noop, closeProcessingModal: noop,
+        closeCancelPaymentModal: noop, clearInterval: noop, setTimeout: noop, escapeHtml: s => s, console
+      });
+      return { els, topbar };
+    }
+
+    test('renderDuplicateSession shows the payment panel and its view, hides sign-in', () => {
+      const { els, topbar } = run('renderDuplicateSession');
+      assert.equal(els.paymentGatewayInterface.hidden, false);
+      assert.equal(els.paymentGatewayInterface.style.props.display, undefined, 'display:none removed');
+      assert.equal(els.viewDuplicateSessionContent.hidden, false);
+      assert.equal(els.preGatewayAuthView.hidden, true);
+      assert.equal(els.ypgStickyFooter.style.display, 'none');
+      assert.equal(topbar.textContent, 'Device Security Verification');
+    });
+
+    test('renderBlockedState shows the payment panel and its view, hides sign-in', () => {
+      const { els } = run('renderBlockedState');
+      assert.equal(els.paymentGatewayInterface.hidden, false);
+      assert.equal(els.viewBlockedContent.hidden, false);
+      assert.equal(els.preGatewayAuthView.hidden, true);
+      assert.equal(els.ypgStickyFooter.style.display, 'none');
+    });
+  });
+
   describe('success receipt', () => {
     const fn = slice('    function renderSuccessReceipt', '\n    // --- QR SVG LOADER ---');
     const ids = ['successRowOrder', 'successOrderVal', 'successRowUtr', 'successUtrVal', 'successRowTime', 'successTimeVal', 'successReceipt', 'successTestBadge'];

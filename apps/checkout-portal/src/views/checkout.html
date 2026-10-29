@@ -2651,6 +2651,9 @@
       const bar = document.getElementById('paymentMethodSelectorBar');
       if (bar) bar.style.display = 'none';
       const footer = document.getElementById('ypgStickyFooter');
+      // Same as renderDuplicateSession: the blocked view is inside the payment panel, which
+      // may still be hidden when this is the first state the page receives.
+      setGatewayAuthMode(false);
       if (footer) footer.style.display = 'none';
 
       hideAllContent();
@@ -2729,6 +2732,10 @@
       const bar = document.getElementById('paymentMethodSelectorBar');
       if (bar) bar.style.display = 'none';
       const footer = document.getElementById('ypgStickyFooter');
+      // The duplicate view lives inside #paymentGatewayInterface, which starts hidden. When the
+      // first state response is this 409, nothing else has shown that panel yet, so show it here
+      // (and hide sign-in) or the view renders at 0x0 under a blank workspace.
+      setGatewayAuthMode(false);
       if (footer) footer.style.display = 'none';
 
       hideAllContent();
