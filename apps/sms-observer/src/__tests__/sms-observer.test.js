@@ -5,6 +5,7 @@ import { Database } from '@youpi/db';
 import { startServer as startPaymentApi } from '../../../payment-api/src/index.js';
 import { startSmsObserver } from '../index.js';
 import { BankSmsParser } from '../sms-parser.js';
+import { SmsObserverService } from '../sms-service.js';
 import { PaymentStatus } from '@youpi/common';
 import { TEST_OBSERVER_TOKEN } from '../../../../scripts/test-support.js';
 
@@ -128,6 +129,15 @@ describe('Google Messages / SMS Payment Observer Integration Tests', () => {
         const json = JSON.parse((await get('/health')).text);
         assert.equal(json.sources.googleMessages.status, 'CONNECTED');
         assert.equal(json.sourceConnected, true);
+      });
+
+      test('payment API unavailable: a credit SMS fails loudly and is not counted as observed', async () => {
+        const offline = new SmsObserverService({ apiBaseUrl: 'http://127.0.0.1:9' });
+        await assert.rejects(offline.processSms({
+          text: 'A/C 1234 credited with Rs. 12.00 on 08-Sep-2026. Ref: UTR-OFFLINE-12 from payer@upi',
+          sender: 'VM-ICICIB'
+        }));
+        assert.equal(offline.observedCount, 0);
       });
 
       test('a non-payment SMS creates no observation', async () => {
