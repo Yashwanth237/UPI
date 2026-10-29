@@ -78,11 +78,34 @@ export class ReceivingAccountRepository {
   }
 
   /**
+   * Refuses to switch the merchant's active VPA while another of its VPAs still has a payment in
+   * flight. Observers resolve an incoming credit against the merchant's *active* account, so a
+   * switch mid-payment would judge the old VPA's credit against the new VPA's sessions: a
+   * same-amount order there could be settled by money that went to the other VPA.
+   * @param {string} merchantId
+   * @param {string} accountId the account about to become active
+   */
+  assertSafeToActivate(merchantId, accountId) {
+    const open = this.db.queryOne(`
+      SELECT COUNT(*) AS n FROM payment_sessions ps
+      JOIN payment_receiving_accounts ra ON ra.id = ps.receiving_account_id
+      WHERE ra.merchant_id = ? AND ra.id != ?
+        AND ps.status IN ('ACTIVE', 'PROCESSING', 'QUEUED')
+    `, [merchantId, accountId]);
+    if (open && Number(open.n) > 0) {
+      const err = new Error('Cannot switch the active UPI ID while another UPI ID has payments in progress. Wait for them to finish or expire, then switch.');
+      err.code = 'ACCOUNT_SWITCH_BLOCKED';
+      throw err;
+    }
+  }
+
+  /**
    * Atomically activates an account and deactivates all other accounts for this merchant.
    * Backend invariant: At most ONE VPA active per merchant.
    */
   activateAccount(merchantId, accountId) {
     return this.db.transaction(() => {
+      this.assertSafeToActivate(merchantId, accountId);
       const now = new Date().toISOString();
 
       // Deactivate all existing accounts for this merchant
@@ -136,6 +159,7 @@ export class ReceivingAccountRepository {
       const isMerchantEnabled = data.isMerchantEnabled !== undefined ? Boolean(data.isMerchantEnabled) : existing.isMerchantEnabled;
 
       if (data.isActive === true) {
+        this.assertSafeToActivate(existing.merchantId, id);
         this.db.execute(`
           UPDATE payment_receiving_accounts
           SET is_active = 0, updated_at = ?
@@ -210,6 +234,9 @@ export class ReceivingAccountRepository {
     const now = new Date().toISOString();
 
     if (existing) {
+      if (existing.isSlotBusy && cleanUpi !== existing.upiId) {
+        throw new Error('Cannot change UPI ID while receiving account slot is currently busy with an active payment session.');
+      }
       this.db.execute(`
         UPDATE payment_receiving_accounts
         SET upi_id = ?, payee_name = COALESCE(?, payee_name), is_merchant_enabled = ?, updated_at = ?

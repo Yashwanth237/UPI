@@ -5,6 +5,19 @@ import { PaymentVerificationPipeline } from '@youpi/core';
 import { globalTunnelManager } from '../services/tunnel-manager.js';
 import { formatQrDataUrl } from '../services/whatsapp-berry.service.js';
 
+/**
+ * Answers 409 for a receiving-account change refused because a payment is in flight (an active
+ * VPA switch, or a VPA edit on a busy slot). Returns false for any other error.
+ */
+function sendAccountConflict(res, err) {
+  const msg = err?.message || '';
+  if (err?.code === 'ACCOUNT_SWITCH_BLOCKED' || msg.startsWith('Cannot change UPI ID while')) {
+    HttpServer.json(res, 409, { error: msg, code: err.code || 'ACCOUNT_BUSY' });
+    return true;
+  }
+  return false;
+}
+
 function resolveSellingModeAndMethods(body, currentBranding = {}) {
   const inputBranding = body.branding || {};
   let sellingMode = body.sellingMode || inputBranding.sellingMode || currentBranding.sellingMode;
@@ -479,13 +492,21 @@ export function registerAdminRoutes(server, ctx) {
     const existingAccounts = ctx.accountRepo.findByMerchantId(merchant.id);
     const shouldActivate = isActive !== undefined ? Boolean(isActive) : (existingAccounts.length === 0);
 
-    const account = ctx.accountRepo.create({
-      merchantId: merchant.id,
-      upiId: upiId.trim(),
-      payeeName: payeeName?.trim() || merchant.businessName,
-      isMerchantEnabled: true,
-      isActive: shouldActivate
-    });
+    let account;
+    try {
+      // Adding a VPA as active switches the merchant's active VPA, so the same in-flight guard applies.
+      if (shouldActivate) ctx.accountRepo.assertSafeToActivate(merchant.id, '');
+      account = ctx.accountRepo.create({
+        merchantId: merchant.id,
+        upiId: upiId.trim(),
+        payeeName: payeeName?.trim() || merchant.businessName,
+        isMerchantEnabled: true,
+        isActive: shouldActivate
+      });
+    } catch (err) {
+      if (sendAccountConflict(res, err)) return;
+      throw err;
+    }
 
     ctx.auditRepo.log({
       merchantId: merchant.id,
@@ -514,7 +535,13 @@ export function registerAdminRoutes(server, ctx) {
       return;
     }
 
-    const updated = ctx.accountRepo.activateAccount(account.merchantId, account.id);
+    let updated;
+    try {
+      updated = ctx.accountRepo.activateAccount(account.merchantId, account.id);
+    } catch (err) {
+      if (sendAccountConflict(res, err)) return;
+      throw err;
+    }
 
     ctx.auditRepo.log({
       merchantId: account.merchantId,
@@ -547,7 +574,12 @@ export function registerAdminRoutes(server, ctx) {
     if (account.isActive) {
       updated = ctx.accountRepo.deactivateAccount(account.merchantId, account.id);
     } else {
-      updated = ctx.accountRepo.activateAccount(account.merchantId, account.id);
+      try {
+        updated = ctx.accountRepo.activateAccount(account.merchantId, account.id);
+      } catch (err) {
+        if (sendAccountConflict(res, err)) return;
+        throw err;
+      }
     }
 
     ctx.auditRepo.log({
@@ -611,12 +643,18 @@ export function registerAdminRoutes(server, ctx) {
     }
 
     const isEnabled = isMerchantEnabled !== undefined ? Boolean(isMerchantEnabled) : true;
-    const updatedAccount = ctx.accountRepo.upsertActiveForMerchant(
-      merchant.id,
-      upiId.trim(),
-      payeeName?.trim() || merchant.businessName,
-      isEnabled
-    );
+    let updatedAccount;
+    try {
+      updatedAccount = ctx.accountRepo.upsertActiveForMerchant(
+        merchant.id,
+        upiId.trim(),
+        payeeName?.trim() || merchant.businessName,
+        isEnabled
+      );
+    } catch (err) {
+      if (sendAccountConflict(res, err)) return;
+      throw err;
+    }
 
     ctx.auditRepo.log({
       merchantId: merchant.id,
@@ -714,7 +752,12 @@ export function registerAdminRoutes(server, ctx) {
         HttpServer.json(res, 400, { error: `Invalid UPI VPA format: "${body.upiId}". Expected: username@bank` });
         return;
       }
-      account = ctx.accountRepo.upsertActiveForMerchant(merchant.id, body.upiId.trim(), body.payeeName?.trim() || body.businessName?.trim() || merchant.businessName);
+      try {
+        account = ctx.accountRepo.upsertActiveForMerchant(merchant.id, body.upiId.trim(), body.payeeName?.trim() || body.businessName?.trim() || merchant.businessName);
+      } catch (err) {
+        if (sendAccountConflict(res, err)) return;
+        throw err;
+      }
     }
 
     // 2. Non-Destructive Deep Merge for Branding & Merchant Properties
