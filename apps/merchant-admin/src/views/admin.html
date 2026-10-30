@@ -3010,7 +3010,7 @@
                   <tr>
                     <th>Device Name</th>
                     <th>Device ID</th>
-                    <th>Paired At</th>
+                    <th>Paired At · Delivery</th>
                     <th>Action</th>
                   </tr>
                 </thead>
@@ -5414,13 +5414,14 @@
         const devBadge = document.getElementById('smsDevBadge');
 
         const devices = data.devices || [];
+        const activeCount = devices.filter(d => d.isActive !== false && d.is_active !== 0).length;
         if (badge) {
-          badge.className = devices.length > 0 ? 'badge badge-success' : 'badge badge-info';
-          badge.innerText = devices.length > 0 ? `${devices.length} PAIRED` : 'STANDBY';
+          badge.className = activeCount > 0 ? 'badge badge-success' : 'badge badge-info';
+          badge.innerText = activeCount > 0 ? `${activeCount} PAIRED` : 'STANDBY';
         }
         if (devBadge) {
-          devBadge.className = devices.length > 0 ? 'badge badge-success' : 'badge badge-info';
-          devBadge.innerText = devices.length > 0 ? `${devices.length} PAIRED` : 'STANDBY';
+          devBadge.className = activeCount > 0 ? 'badge badge-success' : 'badge badge-info';
+          devBadge.innerText = activeCount > 0 ? `${activeCount} PAIRED` : 'STANDBY';
         }
 
         if (!tbody) return;
@@ -5434,11 +5435,20 @@
           const id = d.deviceId || d.id || '-';
           const rawTime = d.pairedAt || d.createdAt || d.created_at;
           const timeStr = rawTime ? new Date(rawTime).toLocaleTimeString() : 'Active';
+          // SQLite datetime('now') has no zone marker but is UTC.
+          const asDate = v => v ? new Date(/[zZ]|[+-]\d\d:?\d\d$/.test(v) ? v : String(v).replace(' ', 'T') + 'Z') : null;
+          const hb = asDate(d.lastHeartbeatAt || d.last_heartbeat_at);
+          const hbStr = hb ? `last heartbeat ${hb.toLocaleTimeString()}` : 'no heartbeat yet';
+          const t = d.telemetry;
+          const delivery = t
+            ? `SMS seen ${t.smsReceived ?? '?'} · kept on phone ${t.smsKeptOnDevice ?? '?'} · queued ${t.smsQueued ?? '?'} · accepted ${t.uploadsAccepted ?? '?'} · rejected ${t.uploadsRejected ?? '?'} · waiting ${t.pendingUploads ?? '?'}${t.lastUploadHttpStatus != null ? ` · last upload HTTP ${t.lastUploadHttpStatus}` : ''}${t.workerRunning === false ? ' · WORKER STOPPED' : ''}`
+            : 'no delivery report yet (older app or no heartbeat since the API started)';
+          const inactive = (d.isActive === false || d.is_active === 0) ? ' · INACTIVE (replaced or unpaired)' : '';
           return `
         <tr>
           <td><strong>${escapeHtml(name)}</strong></td>
           <td><code style="font-size:0.75rem; color:#38bdf8;">${escapeHtml(id)}</code></td>
-          <td><span style="font-size:0.75rem; color:var(--text-muted);">${timeStr}</span></td>
+          <td><span style="font-size:0.75rem; color:var(--text-muted);">${escapeHtml(timeStr)} · ${escapeHtml(hbStr)}${escapeHtml(inactive)}<br>${escapeHtml(delivery)}</span></td>
           <td>
             <button class="btn btn-danger" style="padding:0.25rem 0.6rem; font-size:0.72rem;" onclick="unpairSmsDevice(${jsArg(id)})">Unpair</button>
           </td>

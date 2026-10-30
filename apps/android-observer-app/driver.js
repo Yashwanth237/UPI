@@ -36,6 +36,11 @@ export class AndroidObserverDriver {
       deviceModel: this.deviceModel,
       merchantId
     };
+    // Like the APK: when already paired, prove the current registration so the gateway retires it.
+    if (this.deviceId && this.signingKey) {
+      payload.previousDeviceId = this.deviceId;
+      payload.previousProof = generateHmac(`replace:${this.deviceId}:${enrollmentToken}`, this.signingKey);
+    }
 
     const res = await fetch(url, {
       method: 'POST',
@@ -155,11 +160,11 @@ export class AndroidObserverDriver {
   /**
    * Submits heartbeat to backend.
    */
-  async sendHeartbeat() {
+  async sendHeartbeat(extra = {}) {
     if (!this.deviceId || !this.signingKey) throw new Error('Cannot send heartbeat: device not paired.');
     const url = `${this.apiBaseUrl}/api/v1/pollers/android/heartbeat`;
     const timestamp = Date.now().toString();
-    const bodyString = JSON.stringify({ deviceId: this.deviceId, timestamp: Number(timestamp) });
+    const bodyString = JSON.stringify({ deviceId: this.deviceId, timestamp: Number(timestamp), ...extra });
 
     const res = await fetch(url, {
       method: 'POST',

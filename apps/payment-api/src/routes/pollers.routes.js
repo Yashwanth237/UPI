@@ -100,6 +100,31 @@ export function assessPhoneReachability(url, { allowLanHttp = false, bindHost } 
   return { ok: true, warning: null };
 }
 
+const TELEMETRY_COUNTERS = ['smsReceived', 'smsKeptOnDevice', 'smsQueued', 'duplicatesIgnored', 'uploadAttempts', 'uploadsAccepted', 'uploadsRejected', 'uploadsRetried', 'expiredUnsent'];
+const TELEMETRY_TIMES = ['lastSmsReceivedAt', 'lastQueuedAt', 'lastUploadAttemptAt', 'lastUploadAcceptedAt', 'workerStartedAt'];
+
+/**
+ * Whitelists the delivery counters a phone reports in its signed heartbeat: numbers, epoch-ms
+ * times and HTTP status codes only. Message text, senders and phone numbers are never kept, even
+ * if a client sent them. Returns null when the heartbeat carried no telemetry (older APKs).
+ * @param {any} body
+ */
+export function sanitizeAndroidTelemetry(body) {
+  const src = body && typeof body.telemetry === 'object' && body.telemetry ? body.telemetry : null;
+  if (!src) return null;
+  const count = v => (Number.isSafeInteger(v) && v >= 0 ? v : null);
+  const time = v => (Number.isSafeInteger(v) && v > 0 ? new Date(v).toISOString() : null);
+  const out = {};
+  for (const k of TELEMETRY_COUNTERS) out[k] = count(src[k]);
+  for (const k of TELEMETRY_TIMES) out[k] = time(src[k]);
+  out.lastUploadHttpStatus = Number.isInteger(src.lastUploadHttpStatus) && src.lastUploadHttpStatus >= -1 && src.lastUploadHttpStatus < 600 ? src.lastUploadHttpStatus : null;
+  out.workerRunning = typeof src.workerRunning === 'boolean' ? src.workerRunning : null;
+  out.smsPermissionGranted = typeof src.smsPermissionGranted === 'boolean' ? src.smsPermissionGranted : null;
+  out.pendingUploads = count(body.pendingObservations);
+  out.appVersion = typeof src.appVersion === 'string' ? src.appVersion.slice(0, 32).replace(/[^\w.+-]/g, '') : null;
+  return out;
+}
+
 /** RFC 1918 private IPv4 address (10/8, 172.16/12, 192.168/16). */
 export function isPrivateLanIPv4(host) {
   const m = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(String(host || ''));
@@ -159,6 +184,10 @@ export function registerPollerRoutes(server, ctx) {
     if (now > expiresAt || expiresAt - now > PAIRING_TOKEN_TTL_MS) return false;
     return safeEqual(token, mintPairingToken(merchantId, expiresAt));
   };
+  /** Fingerprints of pairing tokens already used (also recorded in the pairing audit row). */
+  const usedPairingTokens = new Set();
+  /** Delivery counters from each device's last signed heartbeat, since this API started. */
+  const deviceTelemetry = new Map();
 
   // GET /api/v1/pollers/active-window (Enables deep intelligent DOM scanning for active amounts and dual-layer verification)
   server.get('/api/v1/pollers/active-window', async (req, res) => {
@@ -362,15 +391,49 @@ export function registerPollerRoutes(server, ctx) {
       return;
     }
 
+    // Single use: each pairing QR registers one device. Re-scanning, or tapping "Update
+    // Configuration" with the token still filled in, used to add another active registration
+    // every time (five RMX5110 rows in ten minutes), and a leaked QR could be replayed until it
+    // expired. Only a fingerprint of the token is stored.
+    const pairingTokenId = crypto.createHash('sha256').update(String(token)).digest('hex').slice(0, 32);
+    const alreadyUsed = usedPairingTokens.has(pairingTokenId) || Boolean(ctx.db.queryOne(
+      "SELECT 1 AS used FROM audit_logs WHERE action = 'SMS_GATEWAY_DEVICE_PAIRED' AND json_extract(details, '$.pairingTokenId') = ? LIMIT 1",
+      [pairingTokenId]
+    ));
+    if (alreadyUsed) {
+      HttpServer.json(res, 409, { error: 'This pairing QR was already used. Open Merchant Admin for a new QR.' });
+      return;
+    }
+    usedPairingTokens.add(pairingTokenId);
+
     const deviceId = crypto.randomUUID();
     const signingKey = crypto.randomBytes(32).toString('hex');
     const nowIso = new Date().toISOString();
+
+    // Re-pairing replaces the phone's previous registration, but only when the phone proves it
+    // holds that registration's key: HMAC(previous key, "replace:<previousDeviceId>:<token>").
+    // Without a valid proof nothing is deactivated, so a stranger cannot unpair someone else.
+    let replacedDeviceId = null;
+    if (body.previousDeviceId && body.previousProof) {
+      const previous = ctx.db.queryOne(
+        'SELECT id, merchant_id, signing_key_hash FROM android_devices WHERE id = ? AND is_active = 1',
+        [String(body.previousDeviceId)]
+      );
+      if (previous && previous.merchant_id === merchantId && previous.signing_key_hash &&
+          verifyHmac(`replace:${previous.id}:${token}`, previous.signing_key_hash, String(body.previousProof))) {
+        replacedDeviceId = previous.id;
+      }
+    }
 
     try {
       ctx.db.execute(`
         INSERT INTO android_devices (id, merchant_id, device_name, device_model, signing_key_hash, is_active, last_heartbeat_at, created_at)
         VALUES (?, ?, ?, ?, ?, 1, ?, ?)
       `, [deviceId, merchantId, deviceName, deviceModel, signingKey, nowIso, nowIso]);
+      if (replacedDeviceId) {
+        ctx.db.execute('UPDATE android_devices SET is_active = 0 WHERE id = ?', [replacedDeviceId]);
+        deviceTelemetry.delete(replacedDeviceId);
+      }
 
       if (ctx.auditRepo) {
         ctx.auditRepo.log({
@@ -379,8 +442,18 @@ export function registerPollerRoutes(server, ctx) {
           entityId: deviceId,
           action: 'SMS_GATEWAY_DEVICE_PAIRED',
           actorType: 'ADMIN',
-          details: { deviceName, deviceModel }
+          details: { deviceName, deviceModel, pairingTokenId, replacedDeviceId }
         });
+        if (replacedDeviceId) {
+          ctx.auditRepo.log({
+            merchantId,
+            entityType: 'ANDROID_DEVICE',
+            entityId: replacedDeviceId,
+            action: 'SMS_GATEWAY_DEVICE_REPLACED',
+            actorType: 'SYSTEM',
+            details: { replacedBy: deviceId }
+          });
+        }
       }
 
       HttpServer.json(res, 200, {
@@ -388,6 +461,7 @@ export function registerPollerRoutes(server, ctx) {
         deviceId,
         signingKey,
         merchantId,
+        replacedDeviceId,
         message: 'Android SMS Gateway paired successfully.'
       });
     } catch (err) {
@@ -657,6 +731,8 @@ export function registerPollerRoutes(server, ctx) {
     if (!auth) return;
 
     ctx.db.execute('UPDATE android_devices SET last_heartbeat_at = datetime(\'now\') WHERE id = ?', [auth.deviceId]);
+    const telemetry = sanitizeAndroidTelemetry(auth.body);
+    if (telemetry) deviceTelemetry.set(auth.deviceId, { ...telemetry, reportedAt: new Date().toISOString() });
 
     HttpServer.json(res, 200, {
       status: 'HEARTBEAT_ACK',
@@ -728,7 +804,8 @@ export function registerPollerRoutes(server, ctx) {
       last_observation_at: d.last_observation_at,
       createdAt: d.created_at,
       created_at: d.created_at,
-      pairedAt: d.created_at
+      pairedAt: d.created_at,
+      telemetry: deviceTelemetry.get(d.id) || null
     }));
 
     HttpServer.json(res, 200, {
@@ -762,8 +839,11 @@ export function registerPollerRoutes(server, ctx) {
     const devices = ctx.db.query('SELECT id, is_active, last_heartbeat_at, last_observation_at FROM android_devices ORDER BY created_at DESC');
     HttpServer.json(res, 200, {
       lastStoredObservationAt: lastObservation?.at || null,
+      // telemetry: the phone's own delivery counters from its last signed heartbeat since this API
+      // started (null until one arrives); lastObservationAt: the last SMS this server processed.
       androidDevices: devices.map(d => ({
-        id: d.id, isActive: Boolean(d.is_active), lastHeartbeatAt: d.last_heartbeat_at, lastObservationAt: d.last_observation_at
+        id: d.id, isActive: Boolean(d.is_active), lastHeartbeatAt: d.last_heartbeat_at, lastObservationAt: d.last_observation_at,
+        telemetry: deviceTelemetry.get(d.id) || null
       })),
       notSettled: rows.map(r => {
         let details = {};
@@ -801,7 +881,8 @@ export function registerPollerRoutes(server, ctx) {
       last_observation_at: d.last_observation_at,
       createdAt: d.created_at,
       created_at: d.created_at,
-      pairedAt: d.created_at
+      pairedAt: d.created_at,
+      telemetry: deviceTelemetry.get(d.id) || null
     }));
 
     HttpServer.json(res, 200, { devices });
