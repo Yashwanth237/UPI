@@ -21,9 +21,8 @@
     <!-- Persistent Ongoing Notification (Android 13+) -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
-    <!-- Bank Credit SMS Capture -->
+    <!-- Bank Credit SMS Capture: new SMS only. READ_SMS (the whole inbox) is not needed. -->
     <uses-permission android:name="android.permission.RECEIVE_SMS" />
-    <uses-permission android:name="android.permission.READ_SMS" />
 
     <!-- Camera for Merchant QR Pairing -->
     <uses-permission android:name="android.permission.CAMERA" />

@@ -205,15 +205,16 @@ public class MainActivity extends Activity {
 
         root.addView(cardPairing);
 
-        // Test SMS Trigger Button
-        Button btnTestSms = createAccentButton("Dispatch Test Bank Credit SMS");
-        btnTestSms.setOnClickListener(new View.OnClickListener() {
+        // Connection check: a signed heartbeat. It used to post a made-up "INR 500.00 credited" SMS
+        // through the real observation route, which could settle a genuine ₹500 checkout.
+        Button btnTestConnection = createAccentButton("Test Gateway Connection");
+        btnTestConnection.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View v) {
-                sendTestSms();
+                testGatewayConnection();
             }
         });
-        root.addView(btnTestSms);
+        root.addView(btnTestConnection);
 
         scrollView.addView(root);
         setContentView(scrollView);
@@ -236,7 +237,11 @@ public class MainActivity extends Activity {
         if (paired) {
             tvStatusBadge.setText("● STATUS: PAIRED & ACTIVE");
             tvStatusBadge.setTextColor(Color.parseColor("#10b981"));
-            tvDeviceDetails.setText("Device ID: " + apiClient.getDeviceId() + "\nGateway: " + apiClient.getBaseUrl() + "\nModel: " + Build.MANUFACTURER + " " + Build.MODEL);
+            int hb = apiClient.getLastHeartbeatStatus();
+            String link = hb == 0 ? "not checked yet" : (hb >= 200 && hb < 300 ? "OK" : (hb == -1 ? "unreachable" : "HTTP " + hb));
+            tvDeviceDetails.setText("Device ID: " + apiClient.getDeviceId() + "\nGateway: " + apiClient.getBaseUrl()
+                + "\nLast heartbeat: " + link + "\nAlerts waiting to send: " + SmsOutbox.pendingCount(this)
+                + "\nModel: " + Build.MANUFACTURER + " " + Build.MODEL);
             if (btnScanQr != null) btnScanQr.setText("🔄 RE-SCAN PAIRING QR");
             btnPairDevice.setText("Update Configuration");
             btnUnpairDevice.setVisibility(View.VISIBLE);
@@ -275,8 +280,8 @@ public class MainActivity extends Activity {
         }
 
         // SMS permission status
-        boolean hasSms = checkSelfPermission(Manifest.permission.RECEIVE_SMS) == PackageManager.PERMISSION_GRANTED &&
-                         checkSelfPermission(Manifest.permission.READ_SMS) == PackageManager.PERMISSION_GRANTED;
+        // RECEIVE_SMS alone: the app only listens for new SMS and never reads the inbox.
+        boolean hasSms = checkSelfPermission(Manifest.permission.RECEIVE_SMS) == PackageManager.PERMISSION_GRANTED;
         if (hasSms) {
             tvSmsStatus.setText("✉️ Bank SMS Interceptor: GRANTED");
             tvSmsStatus.setTextColor(Color.parseColor("#10b981"));
@@ -324,9 +329,6 @@ public class MainActivity extends Activity {
 
         if (checkSelfPermission(Manifest.permission.RECEIVE_SMS) != PackageManager.PERMISSION_GRANTED) {
             perms.add(Manifest.permission.RECEIVE_SMS);
-        }
-        if (checkSelfPermission(Manifest.permission.READ_SMS) != PackageManager.PERMISSION_GRANTED) {
-            perms.add(Manifest.permission.READ_SMS);
         }
         if (checkSelfPermission(Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED) {
             perms.add(Manifest.permission.CAMERA);
@@ -482,22 +484,34 @@ public class MainActivity extends Activity {
         }).start();
     }
 
-    private void sendTestSms() {
+    private void testGatewayConnection() {
         if (!apiClient.isPaired()) {
-            Toast.makeText(this, "Pair device first before sending test SMS.", Toast.LENGTH_SHORT).show();
+            Toast.makeText(this, "Pair this phone with the gateway first.", Toast.LENGTH_SHORT).show();
             return;
         }
 
         new Thread(new Runnable() {
             @Override
             public void run() {
-                String testSender = "HDFCBK";
-                String testBody = "Dear Customer, INR 500.00 credited to your A/C ending 4321 via UPI Ref 999888777666 on 01-OCT-26.";
-                final boolean ok = apiClient.sendSms(testSender, testBody, System.currentTimeMillis());
+                final int pending = SmsOutbox.flush(MainActivity.this);
+                final int status = apiClient.sendHeartbeatStatus(pending);
+                final String message;
+                if (status >= 200 && status < 300) {
+                    message = "Connected and authenticated." + (pending > 0 ? " " + pending + " alert(s) still queued." : "");
+                } else if (status == -1) {
+                    message = "Gateway unreachable at " + apiClient.getBaseUrl() + ". Same Wi-Fi? Laptop firewall?";
+                } else if (status == 401) {
+                    message = "Gateway refused the signature. Check the phone's date and time.";
+                } else if (status == 403) {
+                    message = "This phone was unpaired in Merchant Admin. Scan a new pairing QR.";
+                } else {
+                    message = "Gateway answered HTTP " + status + ".";
+                }
                 runOnUiThread(new Runnable() {
                     @Override
                     public void run() {
-                        Toast.makeText(MainActivity.this, ok ? "Test Bank SMS Sent to Gateway!" : "Failed to send test SMS.", Toast.LENGTH_SHORT).show();
+                        Toast.makeText(MainActivity.this, message, Toast.LENGTH_LONG).show();
+                        refreshUI();
                     }
                 });
             }

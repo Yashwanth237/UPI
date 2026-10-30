@@ -19,8 +19,8 @@ public class SmsReceiver extends BroadcastReceiver {
         SmsMessage[] messages = Telephony.Sms.Intents.getMessagesFromIntent(intent);
         if (messages == null || messages.length == 0) return;
 
-        final ApiClient client = new ApiClient(context);
-        if (!client.isPaired()) {
+        final Context appContext = context.getApplicationContext();
+        if (!new ApiClient(appContext).isPaired()) {
             Log.w(TAG, "SMS received but device is not paired with YouPI Gateway. Skipping.");
             return;
         }
@@ -44,21 +44,36 @@ public class SmsReceiver extends BroadcastReceiver {
             if (text != null) sb.append(text);
         }
 
+        int queued = 0;
         for (java.util.Map.Entry<String, StringBuilder> entry : bodies.entrySet()) {
             final String sender = entry.getKey().isEmpty() ? null : entry.getKey();
             final String body = entry.getValue().toString();
             final long timestamp = firstTimestamps.get(entry.getKey());
 
-            Log.i(TAG, "Captured incoming SMS: " + body.length() + " chars");
-
-            // Dispatch to YouPI Gateway in asynchronous worker thread
-            new Thread(new Runnable() {
-                @Override
-                public void run() {
-                    boolean success = client.sendSms(sender, body, timestamp);
-                    Log.i(TAG, "Dispatched SMS to YouPI Gateway: " + (success ? "SUCCESS" : "FAILED"));
-                }
-            }).start();
+            // Personal messages, OTPs, promotions and debit alerts never leave the phone.
+            if (!SmsFilter.isEligible(body)) {
+                Log.i(TAG, "SMS not a credit alert; kept on device");
+                continue;
+            }
+            // Queued first and persisted, so the alert survives the gateway being unreachable,
+            // this process being killed, or the phone restarting before it is delivered.
+            if (SmsOutbox.enqueue(appContext, sender, body, timestamp)) queued++;
         }
+        if (queued == 0) return;
+
+        Log.i(TAG, "Queued " + queued + " credit alert(s) for the gateway");
+        // goAsync keeps the process alive while the queue is flushed off the main thread.
+        final PendingResult pending = goAsync();
+        new Thread(new Runnable() {
+            @Override
+            public void run() {
+                try {
+                    int left = SmsOutbox.flush(appContext);
+                    Log.i(TAG, "Outbox flushed; " + left + " still pending");
+                } finally {
+                    pending.finish();
+                }
+            }
+        }).start();
     }
 }

@@ -82,7 +82,16 @@ public class ApiClient {
     }
 
     public boolean sendSms(String sender, String body, long timestamp) {
-        if (!isPaired()) return false;
+        int status = sendSmsStatus(sender, body, timestamp);
+        return status >= 200 && status < 300;
+    }
+
+    /**
+     * Forwards one bank SMS. Returns the HTTP status, or -1 when the gateway could not be reached
+     * (or the device is not paired), so the outbox can tell "retry later" from "processed".
+     */
+    public int sendSmsStatus(String sender, String body, long timestamp) {
+        if (!isPaired()) return -1;
 
         String deviceId = prefs.getString("device_id", null);
         String signingKey = prefs.getString("signing_key", null);
@@ -105,35 +114,60 @@ public class ApiClient {
             String sigPayload = bodyString + ":" + tsStr;
             String signature = calculateHmacSha256(sigPayload, signingKey);
 
-            String response = postJson(endpoint, bodyString, deviceId, tsStr, signature);
-            Log.i(TAG, "SMS dispatched to YouPI Gateway: " + (response != null ? "OK" : "FAILED"));
-            return response != null;
+            int status = postJsonStatus(endpoint, bodyString, deviceId, tsStr, signature);
+            Log.i(TAG, "SMS dispatched to YouPI Gateway: HTTP " + status);
+            return status;
         } catch (Exception e) {
-            Log.e(TAG, "sendSms error: " + e.getMessage(), e);
+            Log.e(TAG, "sendSms error: " + e.getMessage());
         }
-        return false;
+        return -1;
     }
 
-    public boolean sendHeartbeat() {
-        if (!isPaired()) return false;
+    /**
+     * Signed liveness ping. Returns the HTTP status, or -1 when the gateway was unreachable.
+     * 401 means the signature or the phone's clock was refused; 403 means this device was unpaired.
+     */
+    public int sendHeartbeatStatus(int pendingObservations) {
+        if (!isPaired()) return -1;
 
         String deviceId = prefs.getString("device_id", null);
-        String baseUrl = getBaseUrl();
-        String endpoint = baseUrl + "/api/v1/pollers/android/heartbeat";
+        String signingKey = prefs.getString("signing_key", null);
+        String endpoint = getBaseUrl() + "/api/v1/pollers/android/heartbeat";
 
         try {
+            String tsStr = String.valueOf(System.currentTimeMillis());
             JSONObject json = new JSONObject();
             json.put("deviceId", deviceId);
-            json.put("timestamp", System.currentTimeMillis());
-            json.put("batteryPercent", 100);
-            json.put("isCharging", true);
+            json.put("timestamp", Long.parseLong(tsStr));
+            json.put("pendingObservations", pendingObservations);
+            android.os.BatteryManager bm = (android.os.BatteryManager) context.getSystemService(Context.BATTERY_SERVICE);
+            if (bm != null) {
+                json.put("batteryPercent", bm.getIntProperty(android.os.BatteryManager.BATTERY_PROPERTY_CAPACITY));
+                json.put("isCharging", bm.isCharging());
+            }
 
-            String response = postJson(endpoint, json.toString(), deviceId, null, null);
-            return response != null;
+            String bodyString = json.toString();
+            String signature = calculateHmacSha256(bodyString + ":" + tsStr, signingKey);
+            int status = postJsonStatus(endpoint, bodyString, deviceId, tsStr, signature);
+            prefs.edit()
+                .putLong("last_heartbeat_attempt_at", System.currentTimeMillis())
+                .putInt("last_heartbeat_status", status)
+                .apply();
+            return status;
         } catch (Exception e) {
             Log.e(TAG, "Heartbeat error: " + e.getMessage());
         }
-        return false;
+        return -1;
+    }
+
+    public boolean sendHeartbeat() {
+        int status = sendHeartbeatStatus(SmsOutbox.pendingCount(context));
+        return status >= 200 && status < 300;
+    }
+
+    /** HTTP status of the last heartbeat (-1 unreachable, 0 never sent). */
+    public int getLastHeartbeatStatus() {
+        return prefs.getInt("last_heartbeat_status", 0);
     }
 
     public boolean sendObservation(long amountPaise, double amount, String bankRef, String senderVpa, String title, String text, String packageName) {
@@ -180,6 +214,44 @@ public class ApiClient {
 
     public void unpair() {
         prefs.edit().remove("device_id").remove("signing_key").apply();
+    }
+
+    /** POSTs and returns only the HTTP status (-1 when no response was received). */
+    private int postJsonStatus(String urlString, String jsonBody, String deviceId, String timestamp, String signature) {
+        HttpURLConnection conn = null;
+        try {
+            URL url = new URL(urlString);
+            conn = (HttpURLConnection) url.openConnection();
+            conn.setRequestMethod("POST");
+            conn.setRequestProperty("Content-Type", "application/json; charset=utf-8");
+            conn.setRequestProperty("Accept", "application/json");
+            conn.setConnectTimeout(10000);
+            conn.setReadTimeout(10000);
+            conn.setDoOutput(true);
+            if (deviceId != null) conn.setRequestProperty("X-Device-Id", deviceId);
+            if (timestamp != null) conn.setRequestProperty("X-Timestamp", timestamp);
+            if (signature != null) conn.setRequestProperty("X-Signature", signature);
+
+            byte[] input = jsonBody.getBytes(StandardCharsets.UTF_8);
+            try (OutputStream os = conn.getOutputStream()) {
+                os.write(input, 0, input.length);
+            }
+            int code = conn.getResponseCode();
+            // Drain the response so the connection can be reused; its content is not needed.
+            InputStream is = (code >= 200 && code < 300) ? conn.getInputStream() : conn.getErrorStream();
+            if (is != null) {
+                try (InputStream in = is) {
+                    byte[] buf = new byte[1024];
+                    while (in.read(buf) != -1) { }
+                }
+            }
+            return code;
+        } catch (Exception e) {
+            Log.w(TAG, "POST to " + urlString + " failed: " + e.getMessage());
+            return -1;
+        } finally {
+            if (conn != null) conn.disconnect();
+        }
     }
 
     private String postJson(String urlString, String jsonBody, String deviceId, String timestamp, String signature) {

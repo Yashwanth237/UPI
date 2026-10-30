@@ -7,12 +7,16 @@ import android.app.PendingIntent;
 import android.app.Service;
 import android.content.Context;
 import android.content.Intent;
+import android.net.ConnectivityManager;
+import android.net.Network;
 import android.os.Build;
 import android.os.Handler;
 import android.os.IBinder;
 import android.os.Looper;
 import android.os.PowerManager;
 import android.util.Log;
+
+import java.util.concurrent.atomic.AtomicBoolean;
 
 public class ForegroundService extends Service {
     public static final String CHANNEL_ID = "youpi_gateway_foreground_channel";
@@ -23,6 +27,9 @@ public class ForegroundService extends Service {
     private ApiClient apiClient;
     private Handler heartbeatHandler;
     private Runnable heartbeatRunnable;
+    private ConnectivityManager connectivityManager;
+    private ConnectivityManager.NetworkCallback networkCallback;
+    private final AtomicBoolean syncRunning = new AtomicBoolean(false);
 
     @Override
     public void onCreate() {
@@ -45,24 +52,50 @@ public class ForegroundService extends Service {
         Notification notification = buildPersistentNotification();
         startForeground(NOTIFICATION_ID, notification);
 
-        // 3. Heartbeat loop (every 30 seconds)
+        // 3. Heartbeat loop (every 30 seconds), which also retries any SMS still in the outbox
         heartbeatHandler = new Handler(Looper.getMainLooper());
         heartbeatRunnable = new Runnable() {
             @Override
             public void run() {
-                if (apiClient.isPaired()) {
-                    new Thread(new Runnable() {
-                        @Override
-                        public void run() {
-                            apiClient.sendHeartbeat();
-                        }
-                    }).start();
-                }
+                if (apiClient.isPaired()) syncInBackground();
                 heartbeatHandler.postDelayed(this, 30000);
             }
         };
         heartbeatHandler.postDelayed(heartbeatRunnable, 5000);
+
+        // 4. Retry immediately when the phone gets a network back (Wi-Fi reconnect, airplane off)
+        try {
+            connectivityManager = (ConnectivityManager) getSystemService(Context.CONNECTIVITY_SERVICE);
+            if (connectivityManager != null) {
+                networkCallback = new ConnectivityManager.NetworkCallback() {
+                    @Override
+                    public void onAvailable(Network network) {
+                        Log.i(TAG, "Network available; retrying the gateway");
+                        if (apiClient.isPaired()) syncInBackground();
+                    }
+                };
+                connectivityManager.registerDefaultNetworkCallback(networkCallback);
+            }
+        } catch (Exception e) {
+            Log.w(TAG, "Network callback unavailable: " + e.getMessage());
+        }
         Log.i(TAG, "YOUPI Foreground Service started successfully.");
+    }
+
+    /** One heartbeat and one outbox flush, off the main thread; overlapping runs are skipped. */
+    private void syncInBackground() {
+        if (!syncRunning.compareAndSet(false, true)) return;
+        new Thread(new Runnable() {
+            @Override
+            public void run() {
+                try {
+                    int pending = SmsOutbox.flush(ForegroundService.this);
+                    apiClient.sendHeartbeatStatus(pending);
+                } finally {
+                    syncRunning.set(false);
+                }
+            }
+        }).start();
     }
 
     @Override
@@ -119,6 +152,11 @@ public class ForegroundService extends Service {
         super.onDestroy();
         if (heartbeatHandler != null && heartbeatRunnable != null) {
             heartbeatHandler.removeCallbacks(heartbeatRunnable);
+        }
+        if (connectivityManager != null && networkCallback != null) {
+            try {
+                connectivityManager.unregisterNetworkCallback(networkCallback);
+            } catch (Exception ignored) {}
         }
         if (wakeLock != null && wakeLock.isHeld()) {
             try {
