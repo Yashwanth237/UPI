@@ -100,7 +100,7 @@ export function assessPhoneReachability(url, { allowLanHttp = false, bindHost } 
   return { ok: true, warning: null };
 }
 
-const TELEMETRY_COUNTERS = ['smsReceived', 'smsKeptOnDevice', 'smsQueued', 'duplicatesIgnored', 'uploadAttempts', 'uploadsAccepted', 'uploadsRejected', 'uploadsRetried', 'expiredUnsent'];
+const TELEMETRY_COUNTERS = ['smsReceived', 'smsKeptOnDevice', 'smsQueued', 'duplicatesIgnored', 'uploadAttempts', 'uploadsAccepted', 'uploadsRejected', 'uploadsRetried', 'expiredUnsent', 'authFailures', 'awaitingReview'];
 const TELEMETRY_TIMES = ['lastSmsReceivedAt', 'lastQueuedAt', 'lastUploadAttemptAt', 'lastUploadAcceptedAt', 'workerStartedAt'];
 
 /**
@@ -118,6 +118,7 @@ export function sanitizeAndroidTelemetry(body) {
   for (const k of TELEMETRY_COUNTERS) out[k] = count(src[k]);
   for (const k of TELEMETRY_TIMES) out[k] = time(src[k]);
   out.lastUploadHttpStatus = Number.isInteger(src.lastUploadHttpStatus) && src.lastUploadHttpStatus >= -1 && src.lastUploadHttpStatus < 600 ? src.lastUploadHttpStatus : null;
+  out.lastUploadReason = typeof src.lastUploadReason === 'string' && /^[A-Z][A-Z0-9_]{2,63}$/.test(src.lastUploadReason) ? src.lastUploadReason : null;
   out.workerRunning = typeof src.workerRunning === 'boolean' ? src.workerRunning : null;
   out.smsPermissionGranted = typeof src.smsPermissionGranted === 'boolean' ? src.smsPermissionGranted : null;
   out.pendingUploads = count(body.pendingObservations);

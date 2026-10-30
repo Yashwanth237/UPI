@@ -5441,7 +5441,7 @@
           const hbStr = hb ? `last heartbeat ${hb.toLocaleTimeString()}` : 'no heartbeat yet';
           const t = d.telemetry;
           const delivery = t
-            ? `SMS seen ${t.smsReceived ?? '?'} · kept on phone ${t.smsKeptOnDevice ?? '?'} · queued ${t.smsQueued ?? '?'} · accepted ${t.uploadsAccepted ?? '?'} · rejected ${t.uploadsRejected ?? '?'} · waiting ${t.pendingUploads ?? '?'}${t.lastUploadHttpStatus != null ? ` · last upload HTTP ${t.lastUploadHttpStatus}` : ''}${t.workerRunning === false ? ' · WORKER STOPPED' : ''}`
+            ? `SMS seen ${t.smsReceived ?? '?'} · kept on phone ${t.smsKeptOnDevice ?? '?'} · queued ${t.smsQueued ?? '?'} · accepted ${t.uploadsAccepted ?? '?'} · rejected ${t.uploadsRejected ?? '?'} · waiting ${t.pendingUploads ?? '?'}${t.lastUploadHttpStatus != null ? ` · last upload HTTP ${t.lastUploadHttpStatus}${t.lastUploadReason ? ' ' + t.lastUploadReason : ''}` : ''}${t.awaitingReview ? ` · held for review ${t.awaitingReview}` : ''}${t.authFailures ? ` · auth failures ${t.authFailures}` : ''}${t.workerRunning === false ? ' · WORKER STOPPED' : ''}`
             : 'no delivery report yet (older app or no heartbeat since the API started)';
           const inactive = (d.isActive === false || d.is_active === 0) ? ' · INACTIVE (replaced or unpaired)' : '';
           return `

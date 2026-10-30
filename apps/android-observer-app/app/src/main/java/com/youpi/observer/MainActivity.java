@@ -259,8 +259,10 @@ public class MainActivity extends Activity {
                 + "\nCredit alerts queued: " + DeliveryStats.get(this, DeliveryStats.SMS_QUEUED)
                 + ", waiting to send: " + SmsOutbox.pendingCount(this)
                 + "\nUploads accepted: " + DeliveryStats.get(this, DeliveryStats.UPLOADS_ACCEPTED)
-                + ", rejected: " + DeliveryStats.get(this, DeliveryStats.UPLOADS_REJECTED)
-                + (up != 0 ? ", last HTTP " + up : "")
+                + ", not accepted (kept for review): " + DeliveryStats.get(this, DeliveryStats.UPLOADS_REJECTED)
+                + " [" + SmsOutbox.reviewCount(this) + " held]"
+                + (up != 0 ? "\nLast upload: HTTP " + up
+                    + (DeliveryStats.lastUploadReason(this) != null ? " " + DeliveryStats.lastUploadReason(this) : "") : "")
                 + "\nModel: " + Build.MANUFACTURER + " " + Build.MODEL);
             if (btnScanQr != null) btnScanQr.setText("🔄 RE-SCAN PAIRING QR");
             btnPairDevice.setText("Update Configuration");

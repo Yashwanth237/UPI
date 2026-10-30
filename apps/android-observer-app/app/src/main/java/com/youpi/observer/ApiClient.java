@@ -21,7 +21,7 @@ public class ApiClient {
     private static final String TAG = "YoupiApiClient";
     private static final String PREFS_NAME = "youpi_gateway_prefs";
     /** Reported in heartbeats so the gateway can tell which build a phone runs. */
-    static final String APP_VERSION = "1.1.0";
+    static final String APP_VERSION = "1.1.1";
     /** Why the last pairing attempt failed, for the toast (never contains the token). */
     private volatile String lastPairError = null;
 
@@ -139,7 +139,7 @@ public class ApiClient {
             String signature = calculateHmacSha256(sigPayload, signingKey);
 
             int status = postJsonStatus(endpoint, bodyString, deviceId, tsStr, signature);
-            Log.i(TAG, "SMS dispatched to YouPI Gateway: HTTP " + status);
+            Log.i(TAG, "SMS dispatched to YouPI Gateway: HTTP " + status + (lastResponseReason != null ? " " + lastResponseReason : ""));
             return status;
         } catch (Exception e) {
             Log.e(TAG, "sendSms error: " + e.getMessage());
@@ -253,7 +253,36 @@ public class ApiClient {
     }
 
     /** POSTs and returns only the HTTP status (-1 when no response was received). */
+    private volatile String lastResponseReason = null;
+    private volatile long lastRetryAfterMs = 0;
+
+    /** Reason code from the last observation/heartbeat response, or null. Codes only, never text. */
+    public String getLastResponseReason() {
+        return lastResponseReason;
+    }
+
+    /** Retry-After from the last response, in ms (0 when absent). */
+    public long getLastRetryAfterMs() {
+        return lastRetryAfterMs;
+    }
+
+    /** "reason", else "status", from a JSON response, if it is an UPPER_SNAKE code. */
+    static String extractReason(String body) {
+        if (body == null || body.isEmpty()) return null;
+        try {
+            JSONObject json = new JSONObject(body);
+            for (String key : new String[] { "reason", "status" }) {
+                String v = json.optString(key, "");
+                if (v.matches("[A-Z][A-Z0-9_]{2,63}")) return v;
+            }
+        } catch (Exception ignored) {
+            // Not JSON (e.g. a proxy error page): no reason code.
+        }
+        return null;
+    }
+
     private int postJsonStatus(String urlString, String jsonBody, String deviceId, String timestamp, String signature) {
+        lastResponseReason = null;
         HttpURLConnection conn = null;
         try {
             URL url = new URL(urlString);
@@ -273,14 +302,26 @@ public class ApiClient {
                 os.write(input, 0, input.length);
             }
             int code = conn.getResponseCode();
-            // Drain the response so the connection can be reused; its content is not needed.
+            lastRetryAfterMs = 0;
+            String retryAfter = conn.getHeaderField("Retry-After");
+            if (retryAfter != null && retryAfter.trim().matches("\\d{1,6}")) {
+                lastRetryAfterMs = Long.parseLong(retryAfter.trim()) * 1000L;
+            }
+            // Keep only the gateway's machine-readable reason code (e.g. NO_ACTIVE_SESSION,
+            // PERSONAL_SMS_REJECTED). Its human "error" text can quote the sender, so it is
+            // never stored or logged.
             InputStream is = (code >= 200 && code < 300) ? conn.getInputStream() : conn.getErrorStream();
+            StringBuilder sb = new StringBuilder();
             if (is != null) {
-                try (InputStream in = is) {
-                    byte[] buf = new byte[1024];
-                    while (in.read(buf) != -1) { }
+                try (BufferedReader br = new BufferedReader(new InputStreamReader(is, StandardCharsets.UTF_8))) {
+                    char[] buf = new char[1024];
+                    int n;
+                    while ((n = br.read(buf)) != -1) {
+                        if (sb.length() < 16384) sb.append(buf, 0, n);
+                    }
                 }
             }
+            lastResponseReason = extractReason(sb.toString());
             return code;
         } catch (Exception e) {
             Log.w(TAG, "POST to " + urlString + " failed: " + e.getMessage());

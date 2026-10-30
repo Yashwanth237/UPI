@@ -102,5 +102,31 @@ describe('Android pairing hygiene and delivery telemetry', () => {
     assert.equal(out.lastUploadHttpStatus, null);
     assert.equal(out.workerRunning, null);
     assert.equal(out.appVersion, 'b1.1b');
+    assert.equal(sanitizeAndroidTelemetry({ telemetry: { lastUploadReason: 'NO_ACTIVE_SESSION', awaitingReview: 2 } }).lastUploadReason, 'NO_ACTIVE_SESSION');
+    assert.equal(sanitizeAndroidTelemetry({ telemetry: { lastUploadReason: 'Invalid sender +919876543210' } }).lastUploadReason, null);
+  });
+
+  test('a not-accepted upload gets an actionable reason code, without the SMS text or a stack trace', async () => {
+    const phone = new AndroidObserverDriver({ apiBaseUrl: base });
+    await phone.pair((await pairQr()).enrollmentToken);
+    const body = 'Rs.1.00 credited to a/c XX0000 UPI Ref No 500000000001 TEST';
+
+    const fromPhoneNumber = await phone.submitSms({ sender: '+910000000000', body });
+    assert.equal(fromPhoneNumber.status, 400);
+    assert.equal(fromPhoneNumber.body.reason, 'PERSONAL_SMS_REJECTED');
+
+    const noCheckout = await phone.submitSms({ sender: 'VM-HDFCBK', body: 'Rs.1.00 credited to a/c XX0000 UPI Ref No 500000000002' });
+    assert.equal(noCheckout.status, 400);
+    assert.equal(noCheckout.body.reason, 'NO_ACTIVE_SESSION');
+
+    for (const r of [fromPhoneNumber, noCheckout]) {
+      const text = JSON.stringify(r.body);
+      assert.doesNotMatch(text, /credited to a\/c/);
+      assert.doesNotMatch(text, /\n\s+at |node:internal|\.js:\d+/);
+    }
+
+    const badJson = await fetch(`${base}/api/v1/observers/sms`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Device-Id': phone.deviceId }, body: '{not json' });
+    assert.equal(badJson.status, 400);
+    assert.deepEqual(await badJson.json(), { error: 'Invalid JSON payload.' });
   });
 });

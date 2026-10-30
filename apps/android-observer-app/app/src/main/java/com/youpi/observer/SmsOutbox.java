@@ -48,7 +48,7 @@ final class SmsOutbox {
                 String id = idFor(sender, body, receivedAt);
                 JSONArray pending = state.getJSONArray("pending");
                 JSONArray delivered = state.getJSONArray("delivered");
-                if (contains(delivered, id) || indexOf(pending, id) >= 0) {
+                if (contains(delivered, id) || indexOf(pending, id) >= 0 || indexOf(state.getJSONArray("review"), id) >= 0) {
                     Log.i(TAG, "Duplicate SMS ignored");
                     return false;
                 }
@@ -92,6 +92,7 @@ final class SmsOutbox {
                 JSONObject state = load(context);
                 JSONArray pending = state.getJSONArray("pending");
                 JSONArray delivered = state.getJSONArray("delivered");
+                JSONArray review = state.getJSONArray("review");
                 JSONArray keep = new JSONArray();
                 long now = System.currentTimeMillis();
                 boolean gatewayDown = false;
@@ -100,8 +101,10 @@ final class SmsOutbox {
                     JSONObject entry = pending.getJSONObject(i);
                     long receivedAt = entry.optLong("receivedAt", now);
                     if (now - receivedAt > MAX_AGE_MS) {
-                        Log.w(TAG, "Dropping SMS older than 24 h that never reached the gateway");
+                        // Never dropped silently: kept for review with the last failure.
+                        Log.w(TAG, "SMS could not be delivered within 24 h; moved to review");
                         DeliveryStats.count(context, DeliveryStats.EXPIRED_UNSENT, null);
+                        moveToReview(review, entry, entry.optInt("lastStatus", -1), "NOT_DELIVERED_24H", now);
                         continue;
                     }
                     if (gatewayDown || !client.isPaired() || entry.optLong("nextAttemptAt", 0) > now) {
@@ -111,30 +114,46 @@ final class SmsOutbox {
 
                     String sender = entry.isNull("sender") ? null : entry.optString("sender", null);
                     int status = client.sendSmsStatus(sender, entry.getString("body"), receivedAt);
-                    DeliveryStats.recordUploadAttempt(context, status);
-                    if (isFinal(status)) {
-                        delivered.put(entry.getString("id"));
-                        boolean accepted = status >= 200 && status < 300;
-                        DeliveryStats.count(context,
-                            accepted ? DeliveryStats.UPLOADS_ACCEPTED : DeliveryStats.UPLOADS_REJECTED,
-                            accepted ? DeliveryStats.LAST_UPLOAD_ACCEPTED_AT : null);
-                        Log.i(TAG, "SMS processed by gateway: HTTP " + status);
-                    } else {
-                        DeliveryStats.count(context, DeliveryStats.UPLOADS_RETRIED, null);
-                        int attempts = entry.optInt("attempts", 0) + 1;
-                        entry.put("attempts", attempts);
-                        entry.put("nextAttemptAt", now + backoffMs(attempts));
-                        entry.put("lastStatus", status);
-                        keep.put(entry);
-                        // Unreachable gateway: the rest would fail the same way, so wait.
-                        if (status == -1 || status >= 500) gatewayDown = true;
-                        Log.w(TAG, "SMS forward will be retried (HTTP " + status + ", attempt " + attempts + ")");
+                    String reason = client.getLastResponseReason();
+                    DeliveryStats.recordUploadAttempt(context, status, reason);
+                    switch (outcome(status)) {
+                        case ACCEPTED:
+                            delivered.put(entry.getString("id"));
+                            DeliveryStats.count(context, DeliveryStats.UPLOADS_ACCEPTED, DeliveryStats.LAST_UPLOAD_ACCEPTED_AT);
+                            Log.i(TAG, "SMS accepted by gateway: HTTP " + status);
+                            break;
+                        case REVIEW:
+                            // The gateway read it and decided (no open checkout, sender refused,
+                            // malformed). Resending cannot change that; keep it for review instead
+                            // of counting it as delivered.
+                            moveToReview(review, entry, status, reason, now);
+                            DeliveryStats.count(context, DeliveryStats.UPLOADS_REJECTED, null);
+                            Log.w(TAG, "SMS not accepted by gateway: HTTP " + status + " " + (reason != null ? reason : "") + "; kept for review");
+                            break;
+                        default:
+                            if (status == 401 || status == 403) DeliveryStats.count(context, DeliveryStats.AUTH_FAILURES, null);
+                            DeliveryStats.count(context, DeliveryStats.UPLOADS_RETRIED, null);
+                            int attempts = entry.optInt("attempts", 0) + 1;
+                            long delay = status == 429 && client.getLastRetryAfterMs() > 0
+                                ? Math.min(client.getLastRetryAfterMs(), MAX_BACKOFF_MS)
+                                : backoffMs(attempts);
+                            entry.put("attempts", attempts);
+                            entry.put("nextAttemptAt", now + delay);
+                            entry.put("lastStatus", status);
+                            if (reason != null) entry.put("lastReason", reason);
+                            keep.put(entry);
+                            // Unreachable, overloaded or refusing this device: the rest would fail
+                            // the same way, so wait for the next round.
+                            if (status == -1 || status >= 500 || status == 429 || status == 401 || status == 403) gatewayDown = true;
+                            Log.w(TAG, "SMS forward will be retried (HTTP " + status + ", attempt " + attempts + ")");
                     }
                 }
 
                 while (delivered.length() > MAX_DELIVERED_IDS) delivered.remove(0);
+                pruneReview(review, now);
                 state.put("pending", keep);
                 state.put("delivered", delivered);
+                state.put("review", review);
                 save(context, state);
                 return keep.length();
             } catch (Exception e) {
@@ -144,13 +163,48 @@ final class SmsOutbox {
         }
     }
 
+    enum Outcome { ACCEPTED, REVIEW, RETRY }
+
     /**
-     * 2xx: accepted. 400/409/413/422: the gateway read it and decided (unparseable, rejected,
-     * duplicate, too large), so sending it again cannot change the answer.
-     * Everything else (unreachable, 401 clock/signature, 403 unpaired, 429, 5xx) is retried.
+     * 2xx: accepted (the gateway acknowledged it). 400/409/413/422: the gateway read it and
+     * decided (no matching checkout, sender refused, malformed, duplicate, too large); resending
+     * cannot change the answer, so it goes to review, not "delivered". Everything else
+     * (unreachable, 401 clock/signature, 403 unpaired, 429, 5xx) is retried with back-off and,
+     * if never delivered within 24 h, also moved to review.
      */
-    static boolean isFinal(int status) {
-        return (status >= 200 && status < 300) || status == 400 || status == 409 || status == 413 || status == 422;
+    static Outcome outcome(int status) {
+        if (status >= 200 && status < 300) return Outcome.ACCEPTED;
+        if (status == 400 || status == 409 || status == 413 || status == 422) return Outcome.REVIEW;
+        return Outcome.RETRY;
+    }
+
+    /** Alerts the gateway did not accept, kept for this long for a person to check. */
+    static final long REVIEW_KEEP_MS = 7L * 24 * 60 * 60 * 1000;
+    static final int MAX_REVIEW = 50;
+
+    private static void moveToReview(JSONArray review, JSONObject entry, int status, String reason, long now) throws Exception {
+        entry.remove("nextAttemptAt");
+        entry.put("lastStatus", status);
+        entry.put("reason", reason != null ? reason : JSONObject.NULL);
+        entry.put("reviewedAt", now);
+        review.put(entry);
+    }
+
+    private static void pruneReview(JSONArray review, long now) throws Exception {
+        for (int i = review.length() - 1; i >= 0; i--) {
+            if (now - review.getJSONObject(i).optLong("reviewedAt", now) > REVIEW_KEEP_MS) review.remove(i);
+        }
+        while (review.length() > MAX_REVIEW) review.remove(0);
+    }
+
+    static int reviewCount(Context context) {
+        synchronized (LOCK) {
+            try {
+                return load(context).getJSONArray("review").length();
+            } catch (Exception e) {
+                return 0;
+            }
+        }
     }
 
     static long backoffMs(int attempts) {
@@ -201,6 +255,7 @@ final class SmsOutbox {
         if (state == null) state = new JSONObject();
         if (!state.has("pending")) state.put("pending", new JSONArray());
         if (!state.has("delivered")) state.put("delivered", new JSONArray());
+        if (!state.has("review")) state.put("review", new JSONArray());
         return state;
     }
 

@@ -23,16 +23,19 @@ final class DeliveryStats {
     static final String UPLOADS_REJECTED = "uploadsRejected";
     static final String UPLOADS_RETRIED = "uploadsRetried";
     static final String EXPIRED_UNSENT = "expiredUnsent";
+    static final String AUTH_FAILURES = "authFailures";
 
     static final String LAST_SMS_RECEIVED_AT = "lastSmsReceivedAt";
     static final String LAST_QUEUED_AT = "lastQueuedAt";
     static final String LAST_UPLOAD_ATTEMPT_AT = "lastUploadAttemptAt";
     static final String LAST_UPLOAD_ACCEPTED_AT = "lastUploadAcceptedAt";
     static final String LAST_UPLOAD_HTTP_STATUS = "lastUploadHttpStatus";
+    /** The gateway's reason code for the last upload (e.g. NO_ACTIVE_SESSION); a code, never text. */
+    static final String LAST_UPLOAD_REASON = "lastUploadReason";
 
     private static final String[] COUNTERS = {
         SMS_RECEIVED, SMS_KEPT_ON_DEVICE, SMS_QUEUED, DUPLICATES_IGNORED, UPLOAD_ATTEMPTS,
-        UPLOADS_ACCEPTED, UPLOADS_REJECTED, UPLOADS_RETRIED, EXPIRED_UNSENT
+        UPLOADS_ACCEPTED, UPLOADS_REJECTED, UPLOADS_RETRIED, EXPIRED_UNSENT, AUTH_FAILURES
     };
     private static final String[] TIMES = {
         LAST_SMS_RECEIVED_AT, LAST_QUEUED_AT, LAST_UPLOAD_ATTEMPT_AT, LAST_UPLOAD_ACCEPTED_AT
@@ -54,15 +57,22 @@ final class DeliveryStats {
         }
     }
 
-    static void recordUploadAttempt(Context context, int httpStatus) {
+    static void recordUploadAttempt(Context context, int httpStatus, String reasonCode) {
         synchronized (LOCK) {
             SharedPreferences p = prefs(context);
+            String code = reasonCode != null && reasonCode.matches("[A-Z][A-Z0-9_]{2,63}") ? reasonCode : "";
             p.edit()
                 .putLong(UPLOAD_ATTEMPTS, p.getLong(UPLOAD_ATTEMPTS, 0) + 1)
                 .putLong(LAST_UPLOAD_ATTEMPT_AT, System.currentTimeMillis())
                 .putInt(LAST_UPLOAD_HTTP_STATUS, httpStatus)
+                .putString(LAST_UPLOAD_REASON, code)
                 .apply();
         }
+    }
+
+    static String lastUploadReason(Context context) {
+        String v = prefs(context).getString(LAST_UPLOAD_REASON, "");
+        return v.isEmpty() ? null : v;
     }
 
     static long get(Context context, String key) {
@@ -83,6 +93,9 @@ final class DeliveryStats {
             if (t > 0) json.put(k, t);
         }
         if (p.contains(LAST_UPLOAD_HTTP_STATUS)) json.put(LAST_UPLOAD_HTTP_STATUS, p.getInt(LAST_UPLOAD_HTTP_STATUS, 0));
+        String reason = p.getString(LAST_UPLOAD_REASON, "");
+        if (!reason.isEmpty()) json.put(LAST_UPLOAD_REASON, reason);
+        json.put("awaitingReview", SmsOutbox.reviewCount(context));
         return json;
     }
 }

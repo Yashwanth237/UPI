@@ -115,7 +115,11 @@ describe('Android app sources', () => {
     for (const counter of ['recordUploadAttempt', 'UPLOADS_ACCEPTED', 'UPLOADS_REJECTED', 'UPLOADS_RETRIED', 'EXPIRED_UNSENT']) {
       assert.match(outbox, new RegExp(counter), counter);
     }
-    assert.doesNotMatch(javaSource('DeliveryStats.java'), /getMessageBody|getOriginatingAddress|putString/, 'stats hold counts only');
+    const stats = javaSource('DeliveryStats.java');
+    assert.doesNotMatch(stats, /getMessageBody|getOriginatingAddress/, 'stats hold counts only');
+    // The only string kept is the gateway's reason code, and only when it is an UPPER_SNAKE code.
+    assert.deepEqual([...stats.matchAll(/putString\((\w+)/g)].map(m => m[1]), ['LAST_UPLOAD_REASON']);
+    assert.match(stats, /reasonCode\.matches\("\[A-Z\]\[A-Z0-9_\]\{2,63\}"\)/);
   });
 
   test('"PAIRED & ACTIVE" is shown only with a running worker and a recent good heartbeat', () => {
