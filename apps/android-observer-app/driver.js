@@ -121,19 +121,55 @@ export class AndroidObserverDriver {
   }
 
   /**
+   * Forwards a raw SMS exactly as the APK's ApiClient.sendSmsStatus does: body fields in the same
+   * order, signed over `${body}:${sendTime}`, posted to the SMS-broadcast route.
+   * @param {{ sender: string, body: string, receivedAt?: number, timestampOverride?: number }} sms
+   */
+  async submitSms(sms) {
+    if (!this.deviceId || !this.signingKey) {
+      throw new Error('Device must be paired before forwarding SMS.');
+    }
+    const timestamp = String(sms.timestampOverride ?? Date.now());
+    const bodyString = JSON.stringify({
+      deviceId: this.deviceId,
+      sender: sms.sender ?? 'UNKNOWN',
+      body: sms.body ?? '',
+      timestamp: sms.receivedAt ?? Number(timestamp)
+    });
+    const res = await fetch(`${this.apiBaseUrl}/api/v1/observers/sms`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json; charset=utf-8',
+        'X-Device-Id': this.deviceId,
+        'X-Timestamp': timestamp,
+        'X-Signature': generateHmac(`${bodyString}:${timestamp}`, this.signingKey)
+      },
+      body: bodyString
+    });
+    const text = await res.text();
+    let body;
+    try { body = JSON.parse(text); } catch { body = { raw: text }; }
+    return { status: res.status, body };
+  }
+
+  /**
    * Submits heartbeat to backend.
    */
   async sendHeartbeat() {
-    if (!this.deviceId) throw new Error('Cannot send heartbeat: device not paired.');
+    if (!this.deviceId || !this.signingKey) throw new Error('Cannot send heartbeat: device not paired.');
     const url = `${this.apiBaseUrl}/api/v1/pollers/android/heartbeat`;
+    const timestamp = Date.now().toString();
+    const bodyString = JSON.stringify({ deviceId: this.deviceId, timestamp: Number(timestamp) });
 
     const res = await fetch(url, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'X-Device-Id': this.deviceId
+        'X-Device-Id': this.deviceId,
+        'X-Timestamp': timestamp,
+        'X-Signature': generateHmac(`${bodyString}:${timestamp}`, this.signingKey)
       },
-      body: JSON.stringify({ deviceId: this.deviceId, timestamp: Date.now() })
+      body: bodyString
     });
 
     return await res.json();

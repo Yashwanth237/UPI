@@ -126,18 +126,23 @@ export class PaymentObserverClient {
   }
 
   /**
-   * Submits Android heartbeat.
+   * Submits Android heartbeat, signed with the device key like an observation.
    * @param {string} deviceId
+   * @param {string} signingKey
    */
-  async submitHeartbeat(deviceId) {
+  async submitHeartbeat(deviceId, signingKey) {
     const url = `${this.apiBaseUrl}/api/v1/pollers/android/heartbeat`;
+    const timestamp = Date.now().toString();
+    const bodyString = JSON.stringify({ deviceId });
     const res = await fetch(url, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'X-Device-Id': deviceId
+        'X-Device-Id': deviceId,
+        'X-Timestamp': timestamp,
+        'X-Signature': generateHmac(`${bodyString}:${timestamp}`, signingKey)
       },
-      body: JSON.stringify({ deviceId })
+      body: bodyString
     });
     return await res.json();
   }

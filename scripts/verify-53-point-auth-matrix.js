@@ -720,7 +720,8 @@ async function run53PointMatrix() {
       deviceId: 'android_dev_01',
       timestamp: new Date().toISOString()
     });
-    assert.equal(pollerHeartbeat.status, 200);
+    // Heartbeats are device-signed: an unpaired, unsigned caller is refused.
+    assert.equal(pollerHeartbeat.status, 403);
     console.log('  [✓] Test 52 Passed: Observer services operational');
 
     // 53. Control center works

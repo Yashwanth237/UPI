@@ -73,20 +73,54 @@ function recordObservationNotSettled(ctx, { channel, source, sender, receivingAc
  * Whether a paired phone can reach `url`. The observer APK refuses cleartext except to loopback
  * and the emulator host (network_security_config.xml), so a physical phone needs an https:// URL
  * on a host that is not localhost.
+ *
+ * `allowLanHttp`: the operator set YOUPI_ANDROID_GATEWAY_URL to a private-LAN http:// address,
+ * which the phone reaches only with an APK built with that host in YOUPI_ANDROID_LAN_HOSTS.
+ * `bindHost`: where the payment API listens; a loopback bind is unreachable from the LAN.
  * @param {string} url
+ * @param {{ allowLanHttp?: boolean, bindHost?: string }} [options]
  * @returns {{ ok: boolean, warning: string | null }}
  */
-export function assessPhoneReachability(url) {
+export function assessPhoneReachability(url, { allowLanHttp = false, bindHost } = {}) {
   let parsed;
   try { parsed = new URL(url); } catch { return { ok: false, warning: 'The gateway API URL is not a valid URL.' }; }
   const host = parsed.hostname.toLowerCase();
   if (host === 'localhost' || host.endsWith('.localhost') || /^127\./.test(host) || host === '[::1]' || host === '0.0.0.0') {
-    return { ok: false, warning: `The pairing QR points at ${parsed.origin}, which on the phone means the phone itself. Set a public HTTPS API address (for example a Cloudflare Tunnel) before pairing.` };
+    return { ok: false, warning: `The pairing QR points at ${parsed.origin}, which on the phone means the phone itself. Set YOUPI_ANDROID_GATEWAY_URL to this computer's LAN address, or a public HTTPS API address, before pairing.` };
   }
   if (parsed.protocol !== 'https:') {
-    return { ok: false, warning: `The pairing QR uses plain HTTP (${parsed.origin}). The observer app only connects over HTTPS; use an HTTPS address.` };
+    if (!(allowLanHttp && isPrivateLanIPv4(host))) {
+      return { ok: false, warning: `The pairing QR uses plain HTTP (${parsed.origin}). The observer app only connects over HTTPS; use an HTTPS address.` };
+    }
+    if (bindHost && (bindHost === 'localhost' || /^127\./.test(bindHost) || bindHost === '::1')) {
+      return { ok: false, warning: `The pairing QR points at ${parsed.origin}, but the payment API listens on ${bindHost} only. Set YOUPI_BIND_HOST=${host} and restart it.` };
+    }
+    return { ok: true, warning: `Plain HTTP on the local network (${parsed.origin}). The phone connects only if its APK was built with YOUPI_ANDROID_LAN_HOSTS=${host}, and only while it is on this Wi-Fi.` };
   }
   return { ok: true, warning: null };
+}
+
+/** RFC 1918 private IPv4 address (10/8, 172.16/12, 192.168/16). */
+export function isPrivateLanIPv4(host) {
+  const m = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(String(host || ''));
+  if (!m) return false;
+  const [a, b, c, d] = m.slice(1).map(Number);
+  if ([a, b, c, d].some(n => n > 255)) return false;
+  return a === 10 || (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168);
+}
+
+/**
+ * The API address the pairing QR hands to the phone: YOUPI_ANDROID_GATEWAY_URL when set (a LAN
+ * address for local testing), otherwise the canonical runtime API URL.
+ * @param {string} runtimeApiUrl
+ * @returns {{ url: string, overridden: boolean }}
+ */
+export function resolveAndroidGatewayUrl(runtimeApiUrl) {
+  const configured = String(process.env.YOUPI_ANDROID_GATEWAY_URL || '').trim().replace(/\/+$/, '');
+  if (configured && /^https?:\/\/[^/\s]+$/i.test(configured)) {
+    return { url: configured, overridden: true };
+  }
+  return { url: runtimeApiUrl, overridden: false };
 }
 
 /** Android observer request limits: signed-timestamp window and raw body size. */
@@ -364,8 +398,10 @@ export function registerPollerRoutes(server, ctx) {
   server.post('/api/v1/pollers/android/pair', handleAndroidPair);
   server.post('/api/v1/observers/sms/pair', handleAndroidPair);
 
-  // --- ANDROID SMS GATEWAY OBSERVATION INGESTION ---
-  const handleAndroidSmsEvents = async (req, res, { requirePackage = false } = {}) => {
+  // --- ANDROID DEVICE REQUEST AUTHENTICATION ---
+  // Reads the raw body (the HMAC covers its exact bytes) and checks the paired device's signature.
+  // Responds and returns null on any failure; otherwise returns { device, deviceId, body, rawBodyText }.
+  const authenticateAndroidDevice = async (req, res) => {
     const rawBodyText = await new Promise(resolve => {
       let data = '';
       let tooLarge = false;
@@ -378,28 +414,28 @@ export function registerPollerRoutes(server, ctx) {
     });
     if (rawBodyText === null) {
       HttpServer.json(res, 413, { error: 'Payload Too Large' });
-      return;
+      return null;
     }
 
     let body = {};
     try {
-      body = JSON.parse(rawBodyText);
+      body = JSON.parse(rawBodyText || '{}');
     } catch {
       HttpServer.json(res, 400, { error: 'Invalid JSON payload.' });
-      return;
+      return null;
     }
 
     const deviceId = req.headers['x-device-id'] || body.deviceId;
     if (!deviceId) {
       HttpServer.json(res, 400, { error: 'Missing required X-Device-Id header or deviceId.' });
-      return;
+      return null;
     }
 
     // Verify registered device
     const device = ctx.db.queryOne('SELECT * FROM android_devices WHERE id = ? AND is_active = 1', [deviceId]);
     if (!device) {
       HttpServer.json(res, 403, { error: 'Device not authorized or inactive.' });
-      return;
+      return null;
     }
 
     // Verify HMAC Signature & Replay Drift Protection
@@ -409,28 +445,34 @@ export function registerPollerRoutes(server, ctx) {
     // Signature is mandatory: omitting the headers must not skip verification.
     if (!device.signing_key_hash || !timestampStr || !signature) {
       HttpServer.json(res, 401, { error: 'Missing X-Timestamp / X-Signature headers.' });
-      return;
+      return null;
     }
 
-    {
-      // Same policy as device-security.js: up to 5 minutes old, at most 60 s in the future.
-      // A symmetric ±60 s window dropped genuine bank SMS whenever the phone forwarded them
-      // late (offline, retry). Replays inside the window are absorbed by the observation
-      // fingerprint and the one-attribution-per-UTR index.
-      const ts = Number(timestampStr);
-      const now = Date.now();
-      if (isNaN(ts) || now - ts > ANDROID_SIGNATURE_MAX_AGE_MS || ts - now > ANDROID_SIGNATURE_MAX_SKEW_MS) {
-        HttpServer.json(res, 401, { error: 'Timestamp drift exceeded validity window (replay protection triggered).' });
-        return;
-      }
-
-      const sigPayload = `${rawBodyText}:${timestampStr}`;
-      const isValid = verifyHmac(sigPayload, device.signing_key_hash, signature);
-      if (!isValid) {
-        HttpServer.json(res, 401, { error: 'Invalid cryptographic HMAC signature.' });
-        return;
-      }
+    // Same policy as device-security.js: up to 5 minutes old, at most 60 s in the future.
+    // A symmetric ±60 s window dropped genuine bank SMS whenever the phone forwarded them
+    // late (offline, retry). Replays inside the window are absorbed by the observation
+    // fingerprint and the one-attribution-per-UTR index.
+    const ts = Number(timestampStr);
+    const now = Date.now();
+    if (isNaN(ts) || now - ts > ANDROID_SIGNATURE_MAX_AGE_MS || ts - now > ANDROID_SIGNATURE_MAX_SKEW_MS) {
+      HttpServer.json(res, 401, { error: 'Timestamp drift exceeded validity window (replay protection triggered).' });
+      return null;
     }
+
+    const sigPayload = `${rawBodyText}:${timestampStr}`;
+    if (!verifyHmac(sigPayload, device.signing_key_hash, signature)) {
+      HttpServer.json(res, 401, { error: 'Invalid cryptographic HMAC signature.' });
+      return null;
+    }
+
+    return { device, deviceId, body, rawBodyText };
+  };
+
+  // --- ANDROID SMS GATEWAY OBSERVATION INGESTION ---
+  const handleAndroidSmsEvents = async (req, res, { requirePackage = false } = {}) => {
+    const auth = await authenticateAndroidDevice(req, res);
+    if (!auth) return;
+    const { device, deviceId, body } = auth;
 
     // Resolve Receiving Account for this merchant
     let receivingAccountId = body.receivingAccountId;
@@ -608,13 +650,13 @@ export function registerPollerRoutes(server, ctx) {
   server.post('/api/v1/observers/sms', (req, res) => handleAndroidSmsEvents(req, res, { requirePackage: false }));
 
   // --- ANDROID HEARTBEAT HANDLER ---
+  // Signed like an observation. Unsigned, anyone on the network could keep any paired device
+  // looking "online" in Merchant Admin after the phone itself had gone silent.
   const handleAndroidHeartbeat = async (req, res) => {
-    const body = await HttpServer.parseBody(req);
-    const deviceId = req.headers['x-device-id'] || body.deviceId;
+    const auth = await authenticateAndroidDevice(req, res);
+    if (!auth) return;
 
-    if (deviceId) {
-      ctx.db.execute('UPDATE android_devices SET last_heartbeat_at = datetime(\'now\') WHERE id = ?', [deviceId]);
-    }
+    ctx.db.execute('UPDATE android_devices SET last_heartbeat_at = datetime(\'now\') WHERE id = ?', [auth.deviceId]);
 
     HttpServer.json(res, 200, {
       status: 'HEARTBEAT_ACK',
@@ -634,7 +676,8 @@ export function registerPollerRoutes(server, ctx) {
 
     // Canonical runtime URL derivation (Part C2)
     const runtime = resolveRuntimeUrls(merchant?.branding || {});
-    const baseUrl = runtime.apiUrl;
+    const gateway = resolveAndroidGatewayUrl(runtime.apiUrl);
+    const baseUrl = gateway.url;
     const sessionId = crypto.randomUUID();
     const expiresAt = Date.now() + PAIRING_TOKEN_TTL_MS;
     const token = mintPairingToken(merchantId, expiresAt);
@@ -655,7 +698,10 @@ export function registerPollerRoutes(server, ctx) {
 
     // The observer app only speaks HTTPS to anything but the emulator/loopback, and the phone's
     // own "localhost" is the phone. Say so here instead of letting pairing fail on the device.
-    const phoneReach = assessPhoneReachability(baseUrl);
+    const phoneReach = assessPhoneReachability(baseUrl, {
+      allowLanHttp: gateway.overridden,
+      bindHost: process.env.YOUPI_BIND_HOST || '127.0.0.1'
+    });
 
     const pairingPayload = JSON.stringify(pairingPayloadObj);
     const qrSvg = generateQrSvg(pairingPayload, 260);
