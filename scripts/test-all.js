@@ -29,6 +29,8 @@ const testFiles = [
   'apps/gmail-observer/src/__tests__/gmail-observer.test.js',
   'apps/sms-observer/src/__tests__/sms-observer.test.js',
   'apps/android-observer-app/__tests__/android-observer.test.js',
+  'apps/android-observer-app/__tests__/android-app-source.test.js',
+  'apps/payment-api/src/__tests__/android-lan-pairing.test.js',
   'apps/control-center/src/__tests__/control-center.test.js',
   'apps/payment-api/src/__tests__/payment-api.test.js',
   'apps/payment-api/src/__tests__/auth-guard.test.js',
