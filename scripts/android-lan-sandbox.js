@@ -2,6 +2,7 @@
  * Isolated Payment API for testing a physical Android phone on the local network.
  *
  *   node scripts/android-lan-sandbox.js 192.168.1.128 [port=6110]
+ *   node scripts/android-lan-sandbox.js 127.0.0.1 6110   (USB, after `adb reverse tcp:6110 tcp:6110`)
  *
  * - Listens only on the given private LAN IP (never 0.0.0.0) on its own port, so the live
  *   stack on 6100 and its database are untouched.
@@ -19,8 +20,9 @@ import { isPrivateLanIPv4 } from './android-network-config.js';
 
 const [lanIp, portArg] = process.argv.slice(2);
 const port = Number(portArg || 6110);
-if (!isPrivateLanIPv4(lanIp)) {
-  console.error('Usage: node scripts/android-lan-sandbox.js <this PC\'s private LAN IP> [port]');
+// 127.0.0.1: USB/ADB mode. The phone reaches it through `adb reverse tcp:<port> tcp:<port>`.
+if (!isPrivateLanIPv4(lanIp) && lanIp !== '127.0.0.1') {
+  console.error('Usage: node scripts/android-lan-sandbox.js <this PC\'s private LAN IP | 127.0.0.1 with adb reverse> [port]');
   process.exit(1);
 }
 if (port === 6100) {
