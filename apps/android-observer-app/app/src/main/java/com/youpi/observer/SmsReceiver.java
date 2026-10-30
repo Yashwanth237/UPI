@@ -20,6 +20,7 @@ public class SmsReceiver extends BroadcastReceiver {
         if (messages == null || messages.length == 0) return;
 
         final Context appContext = context.getApplicationContext();
+        Log.i(TAG, "SMS_RECEIVED broadcast: " + messages.length + " part(s)");
         if (!new ApiClient(appContext).isPaired()) {
             Log.w(TAG, "SMS received but device is not paired with YouPI Gateway. Skipping.");
             return;
@@ -49,15 +50,22 @@ public class SmsReceiver extends BroadcastReceiver {
             final String sender = entry.getKey().isEmpty() ? null : entry.getKey();
             final String body = entry.getValue().toString();
             final long timestamp = firstTimestamps.get(entry.getKey());
+            DeliveryStats.count(appContext, DeliveryStats.SMS_RECEIVED, DeliveryStats.LAST_SMS_RECEIVED_AT);
 
             // Personal messages, OTPs, promotions and debit alerts never leave the phone.
             if (!SmsFilter.isEligible(body)) {
-                Log.i(TAG, "SMS not a credit alert; kept on device");
+                DeliveryStats.count(appContext, DeliveryStats.SMS_KEPT_ON_DEVICE, null);
+                Log.i(TAG, "SMS received; not a credit alert, kept on device (" + body.length() + " chars)");
                 continue;
             }
             // Queued first and persisted, so the alert survives the gateway being unreachable,
             // this process being killed, or the phone restarting before it is delivered.
-            if (SmsOutbox.enqueue(appContext, sender, body, timestamp)) queued++;
+            if (SmsOutbox.enqueue(appContext, sender, body, timestamp)) {
+                DeliveryStats.count(appContext, DeliveryStats.SMS_QUEUED, DeliveryStats.LAST_QUEUED_AT);
+                queued++;
+            } else {
+                DeliveryStats.count(appContext, DeliveryStats.DUPLICATES_IGNORED, null);
+            }
         }
         if (queued == 0) return;
 

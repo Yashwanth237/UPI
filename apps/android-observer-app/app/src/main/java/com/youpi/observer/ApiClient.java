@@ -20,6 +20,14 @@ import javax.crypto.spec.SecretKeySpec;
 public class ApiClient {
     private static final String TAG = "YoupiApiClient";
     private static final String PREFS_NAME = "youpi_gateway_prefs";
+    /** Reported in heartbeats so the gateway can tell which build a phone runs. */
+    static final String APP_VERSION = "1.1.0";
+    /** Why the last pairing attempt failed, for the toast (never contains the token). */
+    private volatile String lastPairError = null;
+
+    public String getLastPairError() {
+        return lastPairError;
+    }
     private final SharedPreferences prefs;
     private final Context context;
 
@@ -56,9 +64,25 @@ public class ApiClient {
             if (expiresAt > 0) body.put("expiresAt", expiresAt);
             body.put("deviceName", deviceName != null && !deviceName.isEmpty() ? deviceName : Build.MODEL);
             body.put("deviceModel", Build.MANUFACTURER + " " + Build.MODEL);
+            // Re-pairing: prove we hold the current registration's key so the gateway retires it
+            // instead of leaving it active next to the new one.
+            String oldDeviceId = prefs.getString("device_id", null);
+            String oldKey = prefs.getString("signing_key", null);
+            if (oldDeviceId != null && oldKey != null) {
+                body.put("previousDeviceId", oldDeviceId);
+                body.put("previousProof", calculateHmacSha256("replace:" + oldDeviceId + ":" + enrollmentToken, oldKey));
+            }
 
+            lastPairError = null;
             String response = postJson(endpoint, body.toString(), null, null, null);
-            if (response == null) return false;
+            if (response == null) {
+                int code = lastHttpStatus;
+                lastPairError = code == 409 ? "This pairing QR was already used. Show a new QR in Merchant Admin."
+                    : code == 401 ? "Pairing QR invalid or expired. Show a new QR in Merchant Admin."
+                    : code == -1 ? "Gateway unreachable at " + cleanUrl + "."
+                    : "Gateway answered HTTP " + code + ".";
+                return false;
+            }
 
             JSONObject json = new JSONObject(response);
             if (json.optBoolean("paired", false) || json.has("deviceId")) {
@@ -140,6 +164,14 @@ public class ApiClient {
             json.put("deviceId", deviceId);
             json.put("timestamp", Long.parseLong(tsStr));
             json.put("pendingObservations", pendingObservations);
+            // Counts only (DeliveryStats): lets Merchant Admin show where an SMS stopped.
+            JSONObject telemetry = DeliveryStats.snapshot(context);
+            telemetry.put("workerRunning", ForegroundService.isRunning());
+            if (ForegroundService.startedAt() > 0) telemetry.put("workerStartedAt", ForegroundService.startedAt());
+            telemetry.put("smsPermissionGranted",
+                context.checkSelfPermission(android.Manifest.permission.RECEIVE_SMS) == android.content.pm.PackageManager.PERMISSION_GRANTED);
+            telemetry.put("appVersion", APP_VERSION);
+            json.put("telemetry", telemetry);
             android.os.BatteryManager bm = (android.os.BatteryManager) context.getSystemService(Context.BATTERY_SERVICE);
             if (bm != null) {
                 json.put("batteryPercent", bm.getIntProperty(android.os.BatteryManager.BATTERY_PROPERTY_CAPACITY));
@@ -163,6 +195,10 @@ public class ApiClient {
     public boolean sendHeartbeat() {
         int status = sendHeartbeatStatus(SmsOutbox.pendingCount(context));
         return status >= 200 && status < 300;
+    }
+
+    public long getLastHeartbeatAttemptAt() {
+        return prefs.getLong("last_heartbeat_attempt_at", 0);
     }
 
     /** HTTP status of the last heartbeat (-1 unreachable, 0 never sent). */
@@ -254,7 +290,11 @@ public class ApiClient {
         }
     }
 
+    /** HTTP status of the last postJson call (-1 when no response arrived). */
+    private volatile int lastHttpStatus = 0;
+
     private String postJson(String urlString, String jsonBody, String deviceId, String timestamp, String signature) {
+        lastHttpStatus = -1;
         HttpURLConnection conn = null;
         try {
             URL url = new URL(urlString);
@@ -282,6 +322,7 @@ public class ApiClient {
             }
 
             int code = conn.getResponseCode();
+            lastHttpStatus = code;
             InputStream is = (code >= 200 && code < 300) ? conn.getInputStream() : conn.getErrorStream();
             if (is == null) return null;
 

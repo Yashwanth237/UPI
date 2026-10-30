@@ -31,9 +31,18 @@ public class ForegroundService extends Service {
     private ConnectivityManager.NetworkCallback networkCallback;
     private final AtomicBoolean syncRunning = new AtomicBoolean(false);
 
+    /** True only while this service is alive in this process; the UI and heartbeat report it. */
+    private static volatile boolean running = false;
+    private static volatile long startedAt = 0;
+
+    static boolean isRunning() { return running; }
+    static long startedAt() { return startedAt; }
+
     @Override
     public void onCreate() {
         super.onCreate();
+        running = true;
+        startedAt = System.currentTimeMillis();
         apiClient = new ApiClient(this);
 
         // 1. Acquire WakeLock to prevent CPU sleeping during deep background
@@ -150,6 +159,7 @@ public class ForegroundService extends Service {
     @Override
     public void onDestroy() {
         super.onDestroy();
+        running = false;
         if (heartbeatHandler != null && heartbeatRunnable != null) {
             heartbeatHandler.removeCallbacks(heartbeatRunnable);
         }

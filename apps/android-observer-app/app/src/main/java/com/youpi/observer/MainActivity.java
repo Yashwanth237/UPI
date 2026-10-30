@@ -235,12 +235,32 @@ public class MainActivity extends Activity {
     private void refreshUI() {
         boolean paired = apiClient.isPaired();
         if (paired) {
-            tvStatusBadge.setText("● STATUS: PAIRED & ACTIVE");
-            tvStatusBadge.setTextColor(Color.parseColor("#10b981"));
+            // "Active" only when the background worker runs and the gateway answered recently.
             int hb = apiClient.getLastHeartbeatStatus();
-            String link = hb == 0 ? "not checked yet" : (hb >= 200 && hb < 300 ? "OK" : (hb == -1 ? "unreachable" : "HTTP " + hb));
+            long hbAge = System.currentTimeMillis() - apiClient.getLastHeartbeatAttemptAt();
+            boolean gatewayOk = hb >= 200 && hb < 300 && hbAge < 2 * 60 * 1000L;
+            if (!ForegroundService.isRunning()) {
+                tvStatusBadge.setText("● STATUS: PAIRED, BACKGROUND WORKER STOPPED");
+                tvStatusBadge.setTextColor(Color.parseColor("#ef4444"));
+            } else if (!gatewayOk) {
+                tvStatusBadge.setText("● STATUS: PAIRED, GATEWAY NOT REACHED");
+                tvStatusBadge.setTextColor(Color.parseColor("#f59e0b"));
+            } else {
+                tvStatusBadge.setText("● STATUS: PAIRED & ACTIVE");
+                tvStatusBadge.setTextColor(Color.parseColor("#10b981"));
+            }
+            String link = hb == 0 ? "not checked yet" : (hb >= 200 && hb < 300 ? "OK" : (hb == -1 ? "unreachable" : "HTTP " + hb))
+                + (hb != 0 ? " (" + (hbAge / 1000) + " s ago)" : "");
+            int up = DeliveryStats.lastUploadHttpStatus(this);
             tvDeviceDetails.setText("Device ID: " + apiClient.getDeviceId() + "\nGateway: " + apiClient.getBaseUrl()
-                + "\nLast heartbeat: " + link + "\nAlerts waiting to send: " + SmsOutbox.pendingCount(this)
+                + "\nLast heartbeat: " + link
+                + "\nSMS received: " + DeliveryStats.get(this, DeliveryStats.SMS_RECEIVED)
+                + " (kept on phone, not credit alerts: " + DeliveryStats.get(this, DeliveryStats.SMS_KEPT_ON_DEVICE) + ")"
+                + "\nCredit alerts queued: " + DeliveryStats.get(this, DeliveryStats.SMS_QUEUED)
+                + ", waiting to send: " + SmsOutbox.pendingCount(this)
+                + "\nUploads accepted: " + DeliveryStats.get(this, DeliveryStats.UPLOADS_ACCEPTED)
+                + ", rejected: " + DeliveryStats.get(this, DeliveryStats.UPLOADS_REJECTED)
+                + (up != 0 ? ", last HTTP " + up : "")
                 + "\nModel: " + Build.MANUFACTURER + " " + Build.MODEL);
             if (btnScanQr != null) btnScanQr.setText("🔄 RE-SCAN PAIRING QR");
             btnPairDevice.setText("Update Configuration");
@@ -437,7 +457,7 @@ public class MainActivity extends Activity {
                                 Toast.makeText(MainActivity.this, "SMS Gateway Paired Successfully!", Toast.LENGTH_LONG).show();
                                 refreshUI();
                             } else {
-                                Toast.makeText(MainActivity.this, "Pairing Failed. Check network connection.", Toast.LENGTH_LONG).show();
+                                Toast.makeText(MainActivity.this, "Pairing failed: " + (apiClient.getLastPairError() != null ? apiClient.getLastPairError() : "check the gateway address."), Toast.LENGTH_LONG).show();
                             }
                         }
                     });
@@ -476,7 +496,7 @@ public class MainActivity extends Activity {
                             refreshUI();
                         } else {
                             btnPairDevice.setText("Manual Connect");
-                            Toast.makeText(MainActivity.this, "Pairing Failed. Check URL and Enrollment Token.", Toast.LENGTH_LONG).show();
+                            Toast.makeText(MainActivity.this, "Pairing failed: " + (apiClient.getLastPairError() != null ? apiClient.getLastPairError() : "check the gateway address."), Toast.LENGTH_LONG).show();
                         }
                     }
                 });

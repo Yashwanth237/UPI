@@ -101,6 +101,7 @@ final class SmsOutbox {
                     long receivedAt = entry.optLong("receivedAt", now);
                     if (now - receivedAt > MAX_AGE_MS) {
                         Log.w(TAG, "Dropping SMS older than 24 h that never reached the gateway");
+                        DeliveryStats.count(context, DeliveryStats.EXPIRED_UNSENT, null);
                         continue;
                     }
                     if (gatewayDown || !client.isPaired() || entry.optLong("nextAttemptAt", 0) > now) {
@@ -110,10 +111,16 @@ final class SmsOutbox {
 
                     String sender = entry.isNull("sender") ? null : entry.optString("sender", null);
                     int status = client.sendSmsStatus(sender, entry.getString("body"), receivedAt);
+                    DeliveryStats.recordUploadAttempt(context, status);
                     if (isFinal(status)) {
                         delivered.put(entry.getString("id"));
+                        boolean accepted = status >= 200 && status < 300;
+                        DeliveryStats.count(context,
+                            accepted ? DeliveryStats.UPLOADS_ACCEPTED : DeliveryStats.UPLOADS_REJECTED,
+                            accepted ? DeliveryStats.LAST_UPLOAD_ACCEPTED_AT : null);
                         Log.i(TAG, "SMS processed by gateway: HTTP " + status);
                     } else {
+                        DeliveryStats.count(context, DeliveryStats.UPLOADS_RETRIED, null);
                         int attempts = entry.optInt("attempts", 0) + 1;
                         entry.put("attempts", attempts);
                         entry.put("nextAttemptAt", now + backoffMs(attempts));

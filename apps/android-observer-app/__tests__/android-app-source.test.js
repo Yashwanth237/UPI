@@ -106,6 +106,38 @@ describe('Android app sources', () => {
     assert.doesNotMatch(receiver, /Log\.\w\(TAG, [^;]*\+ body[^.]/, 'SMS text must not be logged');
   });
 
+  test('every SMS broadcast is counted at each step, so a stop can be located', () => {
+    const receiver = javaSource('SmsReceiver.java');
+    for (const counter of ['SMS_RECEIVED', 'SMS_KEPT_ON_DEVICE', 'SMS_QUEUED', 'DUPLICATES_IGNORED']) {
+      assert.match(receiver, new RegExp(`DeliveryStats\\.${counter}`), counter);
+    }
+    const outbox = javaSource('SmsOutbox.java');
+    for (const counter of ['recordUploadAttempt', 'UPLOADS_ACCEPTED', 'UPLOADS_REJECTED', 'UPLOADS_RETRIED', 'EXPIRED_UNSENT']) {
+      assert.match(outbox, new RegExp(counter), counter);
+    }
+    assert.doesNotMatch(javaSource('DeliveryStats.java'), /getMessageBody|getOriginatingAddress|putString/, 'stats hold counts only');
+  });
+
+  test('"PAIRED & ACTIVE" is shown only with a running worker and a recent good heartbeat', () => {
+    const activity = javaSource('MainActivity.java');
+    const active = activity.indexOf('"● STATUS: PAIRED & ACTIVE"');
+    assert.ok(active > activity.indexOf('ForegroundService.isRunning()') && active > activity.indexOf('gatewayOk'));
+    assert.match(activity, /PAIRED, BACKGROUND WORKER STOPPED/);
+    assert.match(activity, /PAIRED, GATEWAY NOT REACHED/);
+  });
+
+  test('the foreground service declares only the dataSync type it needs', () => {
+    const manifest = read('AndroidManifest.xml');
+    assert.match(manifest, /android:foregroundServiceType="dataSync"/);
+    assert.doesNotMatch(manifest, /specialUse|FOREGROUND_SERVICE_SPECIAL_USE/);
+    assert.equal(fs.readFileSync(path.join(APP_DIR, 'AndroidManifest.xml'))[0], 0x3c, 'no byte-order mark before <?xml');
+  });
+
+  test('re-pairing sends a proof for the previous registration instead of leaving it active', () => {
+    const client = javaSource('ApiClient.java');
+    assert.match(client, /body\.put\("previousProof", calculateHmacSha256\("replace:" \+ oldDeviceId \+ ":" \+ enrollmentToken, oldKey\)\)/);
+  });
+
   test('asks for RECEIVE_SMS only, never the whole inbox', () => {
     const manifest = read('AndroidManifest.xml');
     assert.match(manifest, /android\.permission\.RECEIVE_SMS/);
