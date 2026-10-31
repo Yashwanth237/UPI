@@ -137,7 +137,8 @@ export class AndroidObserverDriver {
     const timestamp = String(sms.timestampOverride ?? Date.now());
     const bodyString = JSON.stringify({
       deviceId: this.deviceId,
-      sender: sms.sender ?? 'UNKNOWN',
+      // Omitted when the SMS has no originating address, as ApiClient does.
+      sender: sms.sender ?? undefined,
       body: sms.body ?? '',
       timestamp: sms.receivedAt ?? Number(timestamp)
     });

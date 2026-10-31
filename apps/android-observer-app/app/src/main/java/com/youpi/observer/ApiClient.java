@@ -130,7 +130,8 @@ public class ApiClient {
             long receivedAt = timestamp > 0 ? timestamp : Long.parseLong(tsStr);
             JSONObject json = new JSONObject();
             json.put("deviceId", deviceId);
-            json.put("sender", sender != null ? sender : "UNKNOWN");
+            // The SMS originating address, or nothing: a made-up placeholder looked like a header.
+            if (sender != null && !sender.trim().isEmpty()) json.put("sender", sender);
             json.put("body", body != null ? body : "");
             json.put("timestamp", receivedAt);
 

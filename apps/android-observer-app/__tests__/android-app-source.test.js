@@ -106,6 +106,20 @@ describe('Android app sources', () => {
     assert.doesNotMatch(receiver, /Log\.\w\(TAG, [^;]*\+ body[^.]/, 'SMS text must not be logged');
   });
 
+  test('the notification listener applies the SMS filter to the title and text the gateway reads', () => {
+    const listener = javaSource('PaymentNotificationListenerService.java');
+    assert.match(listener, /SmsFilter\.isEligible\(title \+ "\\n" \+ text\)/);
+    assert.doesNotMatch(listener, /contains\("paid you"\)/, 'a phrase the gateway never accepts');
+    assert.equal(isEligible('Rahul paid you ₹100.00'), false);
+  });
+
+  test('an SMS without an originating address is sent without a sender, never as "UNKNOWN"', () => {
+    const client = javaSource('ApiClient.java');
+    assert.doesNotMatch(client, /"UNKNOWN"/);
+    assert.match(client, /if \(sender != null && !sender\.trim\(\)\.isEmpty\(\)\) json\.put\("sender", sender\);/);
+    assert.match(javaSource('SmsReceiver.java'), /part\.getOriginatingAddress\(\)/);
+  });
+
   test('every SMS broadcast is counted at each step, so a stop can be located', () => {
     const receiver = javaSource('SmsReceiver.java');
     for (const counter of ['SMS_RECEIVED', 'SMS_KEPT_ON_DEVICE', 'SMS_QUEUED', 'DUPLICATES_IGNORED']) {

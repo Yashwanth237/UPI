@@ -154,8 +154,8 @@ Disposable test order: use the store at http://localhost:5000 (Buy Now). Every o
 1. Open `/api/v1/admin/observations/diagnostics`.
 2. **Nothing new and `lastStoredObservationAt` unchanged** → the alert never reached the backend. Check the phone: is it paired, is its heartbeat current, does it have an HTTPS URL? Or check Gmail: did the email arrive, does its subject match the search above?
 3. **A `notSettled` entry** → read its `stage` and `reason`:
-   - stage 2: sender or domain (`INVALID_EMAIL_DOMAIN`, `INVALID_SMS_SENDER`)
-   - stage 3: direction (`MISSING_CREDIT_INDICATOR`, `REVERSAL_OR_REFUND`)
+   - stage 2: sender or domain (`INVALID_EMAIL_DOMAIN`, `INVALID_SMS_SENDER`, `MISSING_SMS_SENDER`). `UNVERIFIED_NOTIFICATION_SENDER` is a Google Messages / Samsung Messages / Truecaller notification: it carries no SMS originating address, so it never settles a payment; the SMS broadcast copy of the same message does.
+   - stage 3: text and direction (`MISSING_RAW_TEXT`, `MISSING_CREDIT_INDICATOR`, `DEBIT_NOTIFICATION`, `REVERSAL_OR_REFUND`)
    - stage 4: matching (`NO_ACTIVE_SESSION`, `AMOUNT_MISMATCH`)
    - duplicates: a reused UTR
 4. **Session SUCCESS but the screen did not change** → check the browser console and network for `/state`. This did not happen in testing.

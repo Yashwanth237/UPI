@@ -94,9 +94,9 @@ public class PaymentNotificationListenerService extends NotificationListenerServ
             text = bigTextCs.toString();
         }
 
-        String full = (title + " " + text).toLowerCase();
-        // Check if this looks like a credit / payment received notification
-        if (!full.contains("received") && !full.contains("credited") && !full.contains("deposit") && !full.contains("paid you")) {
+        // Same credit/debit rules as SMS, over the title and text the gateway verifies together.
+        // The earlier ad-hoc check also passed "paid you", which the gateway never accepts.
+        if (!SmsFilter.isEligible(title + "\n" + text)) {
             return;
         }
 

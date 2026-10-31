@@ -9,6 +9,7 @@ export * from './bank-sms-parser.js';
 export * from './bank-email-parser.js';
 export * from './qr.js';
 export * from './verification-pipeline.js';
+export * from './observation-identity.js';
 export * from './device-security.js';
 export * from './otp-delivery.js';
 

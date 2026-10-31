@@ -3036,21 +3036,24 @@
                   <tr>
                     <th>Received</th>
                     <th>Device</th>
+                    <th>Source</th>
                     <th>Sender</th>
+                    <th>Bank</th>
                     <th>Amount</th>
-                    <th>Status</th>
+                    <th>Outcome</th>
                     <th>Reason</th>
                   </tr>
                 </thead>
                 <tbody id="smsHubMessagesBody">
                   <tr>
-                    <td colspan="6" style="text-align:center; color:var(--text-muted); padding:1rem;">Loading…</td>
+                    <td colspan="8" style="text-align:center; color:var(--text-muted); padding:1rem;">Loading…</td>
                   </tr>
                 </tbody>
               </table>
             </div>
             <div style="font-size:0.72rem; color:var(--text-muted); margin-top:0.4rem;">
               ACCEPTED means the alert matched an open checkout. SMS is supporting evidence only. Message text is never stored or shown.
+              Sender is the SMS originating address; an Android app package appears under Source, never as the sender.
             </div>
           </div>
 
@@ -5453,23 +5456,29 @@
         }
         const msgs = data.messages || [];
         if (!msgs.length) {
-          tbody.innerHTML = '<tr><td colspan="6" style="text-align:center; color:var(--text-muted); font-size:0.8rem; padding:1rem;">No bank credit alerts uploaded yet. Personal SMS stay on the phone and never appear here.</td></tr>';
+          tbody.innerHTML = '<tr><td colspan="8" style="text-align:center; color:var(--text-muted); font-size:0.8rem; padding:1rem;">No bank credit alerts uploaded yet. Personal SMS stay on the phone and never appear here.</td></tr>';
           return;
         }
-        const colors = { ACCEPTED: 'badge-success', REJECTED: 'badge-danger', NEEDS_REVIEW: 'badge-warning' };
-        const label = { ACCEPTED: 'ACCEPTED', REJECTED: 'REJECTED', NEEDS_REVIEW: 'NEEDS REVIEW' };
+        const colors = { ACCEPTED: 'badge-success', REJECTED: 'badge-danger', PENDING_REVIEW: 'badge-warning', DUPLICATE: 'badge-info', NO_MATCHING_CHECKOUT: 'badge-warning' };
+        const label = { ACCEPTED: 'ACCEPTED', REJECTED: 'REJECTED', PENDING_REVIEW: 'PENDING REVIEW', DUPLICATE: 'DUPLICATE', NO_MATCHING_CHECKOUT: 'NO MATCHING CHECKOUT' };
+        const trustColor = { VERIFIED: '#22c55e', UNVERIFIED: '#f59e0b', UNKNOWN: 'var(--text-muted)' };
         tbody.innerHTML = msgs.map(m => {
           const when = m.receivedAt || m.uploadedAt;
           const amount = m.amountPaise ? `₹${(Number(m.amountPaise) / 100).toFixed(2)}` : '—';
           const ref = m.referenceLast4 ? ` · ref …${m.referenceLast4}` : '';
+          const outcome = m.outcome || (m.status === 'NEEDS_REVIEW' ? 'PENDING_REVIEW' : m.status);
+          const trust = m.senderTrustStatus || 'UNKNOWN';
+          const checkout = m.orderId ? `<br>order ${escapeHtml(String(m.orderId))}` : (m.sessionId ? `<br>session ${escapeHtml(String(m.sessionId).slice(0, 8))}` : '');
           return `
         <tr>
           <td><span style="font-size:0.75rem;">${escapeHtml(when ? new Date(when).toLocaleString() : '-')}</span></td>
           <td><span style="font-size:0.75rem;">${escapeHtml(m.deviceName || (m.deviceId || '').slice(0, 8))}${m.deviceActive ? '' : ' (inactive)'}</span></td>
-          <td><code style="font-size:0.72rem;">${escapeHtml(m.sender || '-')}</code></td>
+          <td><span style="font-size:0.75rem;">${escapeHtml(m.source || 'SMS')}</span>${m.sourcePackage ? `<br><code style="font-size:0.65rem; color:var(--text-muted);" title="Android app that posted the notification">via ${escapeHtml(m.sourcePackage)}</code>` : ''}</td>
+          <td><code style="font-size:0.72rem;">${escapeHtml(m.sender || 'Unknown')}</code><br><span style="font-size:0.65rem; font-weight:700; color:${trustColor[trust] || 'var(--text-muted)'};">${escapeHtml(trust)}</span></td>
+          <td><span style="font-size:0.75rem;">${escapeHtml(m.bankName || 'Unknown')}</span></td>
           <td><span style="font-size:0.75rem;">${escapeHtml(amount + ref)}</span></td>
-          <td><span class="badge ${colors[m.status] || 'badge-info'}">${escapeHtml(label[m.status] || m.status)}</span></td>
-          <td><span style="font-size:0.72rem; color:var(--text-muted);">${escapeHtml(m.reason || '')}${m.merchantId ? '<br>merchant ' + escapeHtml(String(m.merchantId).slice(0, 8)) : ''}</span></td>
+          <td><span class="badge ${colors[outcome] || 'badge-info'}">${escapeHtml(label[outcome] || outcome)}</span></td>
+          <td><span style="font-size:0.72rem; color:var(--text-muted);">${escapeHtml(m.reason || '')}${m.merchantId ? '<br>merchant ' + escapeHtml(String(m.merchantId).slice(0, 8)) : ''}${checkout}</span></td>
         </tr>`;
         }).join('');
       } catch (e) { }
@@ -7173,14 +7182,19 @@
             if (item.result === 'VERIFIED') resColor = '#22c55e';
             else if (item.result === 'REJECTED') resColor = '#ef4444';
             else if (item.result === 'SUSPICIOUS') resColor = '#f59e0b';
+            // DUPLICATE / NO_MATCHING_CHECKOUT / PENDING_REVIEW say more than the raw status.
+            const outcome = item.outcome && item.outcome !== 'ACCEPTED' && item.outcome !== 'REJECTED'
+              ? `<br><span style="font-size:0.68rem; color:#f59e0b;">${escapeHtml(item.outcome.replace(/_/g, ' '))}</span>` : '';
+            const trust = item.senderTrustStatus
+              ? `<br><span style="font-size:0.66rem; color:${item.senderTrustStatus === 'VERIFIED' ? '#22c55e' : '#94a3b8'};">${escapeHtml(item.senderTrustStatus)}${item.bankName ? ' · ' + escapeHtml(item.bankName) : ''}</span>` : '';
 
             return `
             <tr style="border-bottom:1px solid #1e293b;">
               <td style="padding:0.6rem 0.75rem; color:#94a3b8; font-size:0.78rem;">${time}</td>
               <td style="padding:0.6rem 0.75rem; color:#38bdf8; font-weight:700;">${escapeHtml(item.source)}</td>
-              <td style="padding:0.6rem 0.75rem; color:#f8fafc; font-family:monospace; font-size:0.78rem;">${escapeHtml(item.sender || '-')}</td>
+              <td style="padding:0.6rem 0.75rem; color:#f8fafc; font-family:monospace; font-size:0.78rem;">${escapeHtml(item.sender || '-')}${trust}</td>
               <td style="padding:0.6rem 0.75rem; color:#e2e8f0; font-family:monospace; font-size:0.75rem;">${escapeHtml(item.sessionId ? item.sessionId.slice(0, 10) + '...' : '-')}</td>
-              <td style="padding:0.6rem 0.75rem; font-weight:800; color:${resColor};">${escapeHtml(item.result)}</td>
+              <td style="padding:0.6rem 0.75rem; font-weight:800; color:${resColor};">${escapeHtml(item.result)}${outcome}</td>
               <td style="padding:0.6rem 0.75rem; font-family:monospace; color:#64748b; font-size:0.72rem;">${escapeHtml(item.messageId || '-')}</td>
               <td style="padding:0.6rem 0.75rem; color:#f87171; font-size:0.75rem;">${escapeHtml(item.failingReason || '-')}</td>
             </tr>

@@ -1,5 +1,5 @@
 import '../../../../scripts/test-support.js';
-import { test, describe, before, after, beforeEach } from 'node:test';
+import { test, describe, before, after, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
 import crypto from 'node:crypto';
@@ -108,6 +108,39 @@ describe('Observation security and receiving accounts', () => {
 
       assert.equal((await observe(creditSms('231.00', nextUtr()), { sender: 'AD-HDFCBK-S' })).status, 200);
       assert.equal(statusOf(paymentId), PaymentStatus.SUCCESS);
+    });
+  });
+
+  describe('Email sender allow-list (GMAIL_TRUSTED_SENDERS) and test senders', () => {
+    const observeEmail = (rawText, sender) =>
+      call('/api/v1/pollers/events', { method: 'POST', headers: observer, body: { source: 'GMAIL', sender, receivingAccountId: primaryAccountId, rawText } });
+    const creditMail = (amount, utr) => `Rs.${amount} credited to your account. UPI Ref No ${utr}`;
+    const savedNodeEnv = process.env.NODE_ENV;
+    afterEach(() => {
+      delete process.env.GMAIL_TRUSTED_SENDERS;
+      process.env.NODE_ENV = savedNodeEnv;
+    });
+
+    test('set: a bank-domain address that is not listed is rejected, a listed one settles', async () => {
+      process.env.GMAIL_TRUSTED_SENDERS = 'Alerts@Trusted.bank.in';
+      const { paymentId } = await pay('MAIL-ENFORCE', '232.00');
+      const other = await observeEmail(creditMail('232.00', nextUtr()), 'Other Bank <alerts@other.bank.in>');
+      assert.equal(other.body.reason, 'UNTRUSTED_EMAIL_SENDER');
+      assert.equal(statusOf(paymentId), PaymentStatus.ACTIVE);
+
+      assert.equal((await observeEmail(creditMail('232.00', nextUtr()), 'Bank <alerts@trusted.bank.in>')).status, 200);
+      assert.equal(statusOf(paymentId), PaymentStatus.SUCCESS);
+    });
+
+    test('production: the TEST and *.youpi.local test senders are rejected', async () => {
+      const { paymentId } = await pay('MAIL-PROD-TEST', '233.00');
+      process.env.NODE_ENV = 'production';
+      for (const sender of ['TEST', 'alerts@demo.youpi.local']) {
+        const res = await observeEmail(creditMail('233.00', nextUtr()), sender);
+        assert.equal(res.body.accepted, false, sender);
+        assert.equal(res.body.reason, 'INVALID_EMAIL_DOMAIN', sender);
+      }
+      assert.equal(statusOf(paymentId), PaymentStatus.ACTIVE);
     });
   });
 

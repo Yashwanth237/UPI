@@ -72,6 +72,20 @@ export function isFinalSubmissionFailure(err, emailTimeMs, nowMs = Date.now()) {
   return true;
 }
 
+/**
+ * Gmail search for credit alerts. With GMAIL_TRUSTED_SENDERS set (comma separated addresses),
+ * only mail from those senders is fetched; the verification pipeline enforces the same list.
+ * @param {Record<string, string | undefined>} [env]
+ */
+export function buildGmailSearchQuery(env = process.env) {
+  const base = 'subject:(credit OR credited OR received OR upi OR deposit OR alert)';
+  const senders = String(env.GMAIL_TRUSTED_SENDERS || '')
+    .split(',')
+    .map(s => s.trim().toLowerCase())
+    .filter(s => /^[^\s@()"]+@[^\s@()"]+$/.test(s));
+  return senders.length ? `from:(${senders.join(' OR ')}) ${base}` : base;
+}
+
 export class GmailPoller {
   /**
    * @param {{
@@ -341,7 +355,7 @@ export class GmailPoller {
         return;
       }
 
-      const query = encodeURIComponent('subject:(credit OR credited OR received OR upi OR deposit OR alert)');
+      const query = encodeURIComponent(buildGmailSearchQuery());
       const listRes = await fetch(`https://gmail.googleapis.com/gmail/v1/users/me/messages?maxResults=10&q=${query}`, {
         headers: { 'Authorization': `Bearer ${accessToken}` },
         signal: AbortSignal.timeout(8000)

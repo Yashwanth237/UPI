@@ -6,10 +6,12 @@ import {
   toPaise,
   normalizeEmail,
   normalizeMobile,
-  isAllowedNotificationPackage
+  isAllowedNotificationPackage,
+  isSmsRelayPackage
 } from '@youpi/common';
 import { extractIntelligentAmount } from './bank-sms-parser.js';
 import { ObservationNormalizer } from './normalizer.js';
+import { describeObservationSender, smsHeaderCode } from './observation-identity.js';
 
 /**
  * Universal Institutional Identifier: Every official Indian bank alert domain ends with .bank.in
@@ -32,16 +34,15 @@ function trustedSmsSenders() {
 }
 
 /**
- * Reduces a delivered SMS sender ("VM-HDFCBK", "AD-HDFCBK-S", "hdfcbk") to its DLT header code
- * ("HDFCBK") by dropping the 2-letter operator/circle prefix and the -S/-T/-P/-G category suffix.
- * @param {string} sender
+ * Bank alert email addresses the operator trusts, from GMAIL_TRUSTED_SENDERS (comma separated).
+ * Unset or empty = no allow-list (any bank-domain sender passes stage 2).
+ * @returns {Set<string> | null}
  */
-function smsHeaderCode(sender) {
-  return String(sender || '')
-    .trim()
-    .toUpperCase()
-    .replace(/^[A-Z]{2}-/, '')
-    .replace(/-[SPTG]$/, '');
+export function trustedEmailSenders() {
+  const raw = (process.env.GMAIL_TRUSTED_SENDERS || '').trim();
+  if (!raw) return null;
+  const addresses = raw.split(',').map(s => s.trim().toLowerCase()).filter(s => s.includes('@'));
+  return addresses.length ? new Set(addresses) : null;
 }
 
 /**
@@ -168,6 +169,15 @@ export class PaymentVerificationPipeline {
       defaultSender = 'TEST';
     }
     const sender = input.sender !== undefined ? input.sender : defaultSender;
+    // The Android app that posted a notification. Older callers passed it as `sender`; it is an
+    // app identity, never an SMS sender, and is judged separately in stage 2.
+    const sourcePackage = (typeof input.sourcePackage === 'string' && input.sourcePackage.trim())
+      ? input.sourcePackage.trim().toLowerCase()
+      : (source === 'SMS' && isAllowedNotificationPackage(sender) ? sender.trim().toLowerCase() : null);
+    const senderIdentity = describeObservationSender(
+      { source, channel: input.channel, sender, sourcePackage },
+      { trustedSms: trustedSmsSenders(), trustedEmails: trustedEmailSenders() }
+    );
 
     let receivedAt = new Date();
     if (input.receivedAt) {
@@ -227,6 +237,7 @@ export class PaymentVerificationPipeline {
         amountPaise: parsed?.amountPaise ? parsed.amountPaise.toString() : null,
         reference: parsed?.bankReferenceNumber || null,
         sender,
+        senderIdentity,
         isTest,
         raw: observation.raw,
         failingStage: failingStage || null,
@@ -348,8 +359,52 @@ export class PaymentVerificationPipeline {
     // [ STAGE 2 ]: Source / Sender Filtering
     // =========================================================================
     let stage2;
-    if (source === 'SMS') {
+    if (source === 'SMS' && sourcePackage) {
+      // Android notification. The package was attested by the phone's OS and is the identity
+      // here; there is no SMS sender to check. A messaging app (Google Messages, Truecaller)
+      // relays SMS from anyone, a personal number included, so its package proves nothing about
+      // the bank: such a copy is refused, and the SMS broadcast with the real address decides.
+      let failure = null;
+      if (!isAllowedNotificationPackage(sourcePackage)) {
+        failure = ['UNTRUSTED_NOTIFICATION_PACKAGE', `Notification package '${sourcePackage}' is not an allowed banking or UPI app.`];
+      } else if (isSmsRelayPackage(sourcePackage)) {
+        failure = ['UNVERIFIED_NOTIFICATION_SENDER', `Notification from messaging app '${sourcePackage}' does not carry the SMS originating address, so the bank sender cannot be verified. The SMS observation of the same message is used instead.`];
+      }
+      if (failure) {
+        stage2 = { stage: 2, name: 'FILTER', status: 'FAILED', reason: failure[0], details: failure[1] };
+        return buildResult({
+          finalStatus: 'REJECTED',
+          failingStage: 2,
+          failingCondition: failure[0],
+          failingReason: failure[1],
+          stage2
+        });
+      }
+      stage2 = {
+        stage: 2,
+        name: 'FILTER',
+        status: 'PASSED',
+        details: `Notification posted by banking/UPI app '${sourcePackage}'. Bank sender unknown.`
+      };
+    } else if (source === 'SMS') {
       const cleanSender = (sender || '').trim();
+      if (!cleanSender || cleanSender.toUpperCase() === 'UNKNOWN') {
+        // No originating address: nothing to tell a bank header from a personal number.
+        stage2 = {
+          stage: 2,
+          name: 'FILTER',
+          status: 'FAILED',
+          reason: 'MISSING_SMS_SENDER',
+          details: 'SMS has no originating address, so its sender cannot be checked.'
+        };
+        return buildResult({
+          finalStatus: 'REJECTED',
+          failingStage: 2,
+          failingCondition: 'MISSING_SMS_SENDER',
+          failingReason: stage2.details,
+          stage2
+        });
+      }
       const digitsOnly = cleanSender.replace(/[\s+-]/g, '');
 
       // Pure numeric check: Any string consisting solely of numbers (personal mobile numbers or +91 prefixed values)
@@ -405,7 +460,7 @@ export class PaymentVerificationPipeline {
         // only a label the network delivered, not proof of origin, but restricting it to the
         // merchant's own bank headers stops made-up senders such as "FAKEBNK".
         const trusted = trustedSmsSenders();
-        if (trusted && !isAllowedNotificationPackage(cleanSender.toLowerCase()) && !trusted.has(smsHeaderCode(cleanSender))) {
+        if (trusted && !trusted.has(smsHeaderCode(cleanSender))) {
           stage2 = {
             stage: 2,
             name: 'FILTER',
@@ -456,7 +511,30 @@ export class PaymentVerificationPipeline {
         emailDomain === 'fin.in' ||
         Array.from(KNOWN_BANK_DOMAINS).some(root => emailDomain === root || emailDomain.endsWith('.' + root));
       // In automated test suite or local dev, allow TEST sender and legacy test fixture domains
-      const isValidDomain = isBankDomain || sender === 'TEST' || cleanEmail === 'TEST' || sender === 'gmail-browser-automator' || emailDomain.endsWith('.youpi.local');
+      // Test and fixture senders are accepted only outside production.
+      const isTestSender = process.env.NODE_ENV !== 'production' &&
+        (sender === 'TEST' || cleanEmail === 'TEST' || sender === 'gmail-browser-automator' || emailDomain.endsWith('.youpi.local'));
+      const isValidDomain = isBankDomain || isTestSender;
+
+      // Optional operator allow-list of bank alert addresses (GMAIL_TRUSTED_SENDERS), the email
+      // counterpart of SMS_TRUSTED_SENDERS. A From header is not proof of origin either.
+      const trustedEmails = trustedEmailSenders();
+      if (isValidDomain && !isTestSender && trustedEmails && !trustedEmails.has(cleanEmail.toLowerCase())) {
+        stage2 = {
+          stage: 2,
+          name: 'FILTER',
+          status: 'FAILED',
+          reason: 'UNTRUSTED_EMAIL_SENDER',
+          details: `Email sender '${cleanEmail}' is not in GMAIL_TRUSTED_SENDERS.`
+        };
+        return buildResult({
+          finalStatus: 'REJECTED',
+          failingStage: 2,
+          failingCondition: 'UNTRUSTED_EMAIL_SENDER',
+          failingReason: stage2.details,
+          stage2
+        });
+      }
 
       if (!isValidDomain) {
         if (!isAttributableToCustomer) {
@@ -515,8 +593,49 @@ export class PaymentVerificationPipeline {
     // =========================================================================
     let stage3;
 
+    // An empty body used to be reported as MISSING_CREDIT_INDICATOR, which pointed at the
+    // wording of a message that never arrived.
+    if (!rawText.trim()) {
+      stage3 = {
+        stage: 3,
+        name: 'PARSER',
+        status: 'FAILED',
+        reason: 'MISSING_RAW_TEXT',
+        details: 'Observation has no message text to verify.'
+      };
+      return buildResult({
+        finalStatus: 'REJECTED',
+        failingStage: 3,
+        failingCondition: 'MISSING_RAW_TEXT',
+        failingReason: stage3.details,
+        stage2,
+        stage3,
+        session
+      });
+    }
+
     // Invariant 1: Check CR/CREDIT/CREDITED indicator
     const creditKeywords = /(?:credited|credit|cr\b|deposit|deposited|received|transferred)/i;
+    const debitWords = /\b(?:debited|withdrawn|deducted|spent|paid rs|sent rs)\b/i;
+    if (!creditKeywords.test(rawText) && debitWords.test(rawText)) {
+      // A plain debit alert: named as one rather than as a credit with missing wording.
+      stage3 = {
+        stage: 3,
+        name: 'PARSER',
+        status: 'FAILED',
+        reason: 'DEBIT_NOTIFICATION',
+        details: 'Message reports money leaving the account, not an incoming credit.'
+      };
+      return buildResult({
+        finalStatus: 'REJECTED',
+        failingStage: 3,
+        failingCondition: 'DEBIT_NOTIFICATION',
+        failingReason: stage3.details,
+        stage2,
+        stage3,
+        session
+      });
+    }
     if (!creditKeywords.test(rawText)) {
       stage3 = {
         stage: 3,
@@ -549,7 +668,7 @@ export class PaymentVerificationPipeline {
       if (/\b(?:revers(?:al|ed|ing)|refund(?:ed|s)?|charge\s*back|credited\s+back|(?:has\s+)?failed|declined)\b/i.test(rawText)) {
         return ['REVERSAL_OR_REFUND', 'Message describes a reversal, refund or failed transaction, not a new incoming payment.'];
       }
-      const debitIdx = rawText.search(/\b(?:debited|withdrawn|deducted|spent|paid rs|sent rs)\b/i);
+      const debitIdx = rawText.search(debitWords);
       if (debitIdx === -1) return null;
       const creditIdx = rawText.search(/\b(?:credited|received|deposit|deposited)\b/i);
       if (creditIdx === -1 || debitIdx < creditIdx) {

@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { HttpServer } from '../server.js';
-import { ObservationNormalizer, BankSmsParser, BankEmailParser, generateQrSvg } from '@youpi/core';
+import { ObservationNormalizer, BankSmsParser, BankEmailParser, generateQrSvg, describeObservationSender, classifyObservationOutcome } from '@youpi/core';
 import { toRupeesString, toPaise, verifyHmac, resolveRuntimeUrls, resolveSecret, safeEqual, hasBearer, getObserverToken, isAllowedNotificationPackage } from '@youpi/common';
 import { isAdminRequest } from '../auth-guard.js';
 
@@ -65,6 +65,37 @@ export function androidHubStatus(pipeResult) {
 }
 
 /**
+ * Sender fields as stored or shown: the masked SMS/email sender, the Android app that posted a
+ * notification, the bank when the sender names it, and the trust status. A package name is never
+ * returned as the sender; rows recorded before the split stored one there and are read the same way.
+ * @param {{ source?: string, sender?: string | null, sourcePackage?: string | null, bankName?: string | null, senderTrustStatus?: string }} stored
+ * @param {any} [pipeResult]
+ */
+export function observationSenderFields(stored, pipeResult) {
+  const id = pipeResult?.senderIdentity || describeObservationSender({
+    source: stored?.source,
+    sender: stored?.sender,
+    sourcePackage: stored?.sourcePackage
+  });
+  return {
+    source: id.source,
+    sender: maskSmsSender(id.sender),
+    sourcePackage: id.sourcePackage || null,
+    bankName: stored?.bankName ?? id.bankName ?? null,
+    senderTrustStatus: pipeResult?.senderIdentity ? id.senderTrustStatus : (stored?.senderTrustStatus || id.senderTrustStatus)
+  };
+}
+
+/**
+ * Outcome of a hub row recorded before `outcome` was stored, from its status and reason.
+ * @param {{ status?: string, reason?: string }} d
+ */
+function legacyHubOutcome(d) {
+  if (d.status === 'ACCEPTED') return 'ACCEPTED';
+  return classifyObservationOutcome({ status: d.status === 'REJECTED' ? 'REJECTED' : 'UNRESOLVED', failingCondition: d.reason });
+}
+
+/**
  * Records why an observation did not settle a payment, without its message text, so a missing
  * "Payment Successful" can be traced to a stage. Before this, rejected observations left no
  * record at all: only the observer's console line said anything.
@@ -85,10 +116,11 @@ function recordObservationNotSettled(ctx, { channel, source, sender, receivingAc
       actorType: 'OBSERVER',
       details: {
         channel,
+        ...observationSenderFields({ source, sender }, pipeResult),
         source,
-        sender: maskSmsSender(sender),
         receivingAccountId: receivingAccountId || null,
         status: pipeResult.status || 'UNRESOLVED',
+        outcome: classifyObservationOutcome(pipeResult),
         stage: pipeResult.failingStage ?? null,
         reason: pipeResult.failingCondition || pipeResult.stages?.stage6?.outcomeStatus || 'UNRESOLVED_OBSERVATION',
         amountPaise: pipeResult.amountPaise != null ? String(pipeResult.amountPaise) : null,
@@ -120,9 +152,12 @@ function recordAndroidSmsEvent(ctx, { device, sender, receivingAccountId, rawTex
       actorType: 'OBSERVER',
       details: {
         status,
+        outcome: classifyObservationOutcome(pipeResult),
         reason: status === 'ACCEPTED' ? 'VERIFIED' : (pipeResult.stages?.stage6?.outcomeStatus || pipeResult.failingCondition || 'UNRESOLVED_OBSERVATION'),
         stage: pipeResult.failingStage ?? null,
-        sender: maskSmsSender(sender),
+        ...observationSenderFields({ sender }, pipeResult),
+        sessionId: pipeResult.session?.id || null,
+        orderId: pipeResult.session?.orderId || null,
         receivingAccountId: receivingAccountId || null,
         amountPaise: (amountPaise ?? pipeResult.amountPaise) != null ? String(amountPaise ?? pipeResult.amountPaise) : null,
         referenceLast4: reference ? reference.slice(-4) : null,
@@ -684,8 +719,16 @@ export function registerPollerRoutes(server, ctx) {
       }
     }
 
-    // Check for raw SMS text inside body or rawNotification
-    const rawText = body.body || body.sms || body.rawSms || body.message || body.text || body.rawNotification?.text;
+    const notificationPackage = rawPkg && typeof rawPkg === 'string' && rawPkg.trim() ? rawPkg.trim().toLowerCase() : null;
+    const isNotification = requirePackage || Boolean(notificationPackage);
+
+    // Check for raw SMS text inside body or rawNotification. A notification is its title and
+    // text together: the phone decides it is a credit from both, and apps such as Truecaller put
+    // the amount or the "credited" wording in the title, so the text alone failed stage 3.
+    const notificationText = [body.rawNotification?.title, body.rawNotification?.text]
+      .filter(part => typeof part === 'string' && part.trim())
+      .join('\n');
+    const rawText = body.body || body.sms || body.rawSms || body.message || body.text || notificationText;
     if (!rawText || (typeof rawText === 'string' && !rawText.trim())) {
       HttpServer.json(res, 400, {
         accepted: false,
@@ -696,10 +739,17 @@ export function registerPollerRoutes(server, ctx) {
       return;
     }
 
+    // The SMS originating address the phone read. A notification has none: its package is the
+    // app that posted it, never the bank sender, and travels as sourcePackage. Observer builds up
+    // to 1.1.1 send "UNKNOWN" for an SMS without an address, which is no sender either.
+    const reportedSender = body.sender || req.headers['x-sender'];
+    const smsSender = !isNotification && typeof reportedSender === 'string' && reportedSender.trim() &&
+      reportedSender.trim().toUpperCase() !== 'UNKNOWN' ? reportedSender.trim() : null;
+
     if (rawText && (!amountPaise || !bankRef)) {
       const parsedSms = BankSmsParser.parse({
         text: rawText,
-        sender: body.sender || body.rawNotification?.package,
+        sender: smsSender || undefined,
         timestamp: observedAt
       });
 
@@ -724,8 +774,10 @@ export function registerPollerRoutes(server, ctx) {
 
     const pipeResult = ctx.pipeline.process({
       source: 'SMS',
+      channel: isNotification ? 'NOTIFICATION' : 'SMS',
       rawText,
-      sender: body.sender || req.headers['x-sender'] || body.rawNotification?.package,
+      sender: smsSender,
+      sourcePackage: notificationPackage,
       receivingAccountId,
       paymentSessionId: body.paymentSessionId,
       bankReferenceNumber: bankRef,
@@ -734,11 +786,12 @@ export function registerPollerRoutes(server, ctx) {
     });
     // Personal and promotional SMS (no amount, unresolved) are routine and not worth a record.
     if (amountPaise || pipeResult.status !== 'UNRESOLVED') {
+      const source = isNotification ? 'NOTIFICATION' : 'SMS';
       recordObservationNotSettled(ctx, {
-        channel: 'ANDROID', source: 'SMS', sender: body.sender || req.headers['x-sender'] || body.rawNotification?.package, receivingAccountId, rawText, pipeResult
+        channel: 'ANDROID', source, sender: smsSender, receivingAccountId, rawText, pipeResult
       });
       recordAndroidSmsEvent(ctx, {
-        device, sender: body.sender || req.headers['x-sender'] || body.rawNotification?.package, receivingAccountId, rawText, pipeResult,
+        device, sender: smsSender, receivingAccountId, rawText, pipeResult,
         receivedAt: observedAt, amountPaise
       });
     }
@@ -933,7 +986,12 @@ export function registerPollerRoutes(server, ctx) {
       notSettled: rows.map(r => {
         let details = {};
         try { details = JSON.parse(r.details || '{}'); } catch {}
-        return { id: r.id, observationId: r.entity_id, at: r.created_at, ...details };
+        return {
+          id: r.id, observationId: r.entity_id, at: r.created_at, ...details,
+          ...observationSenderFields(details),
+          // channel source as recorded (SMS / NOTIFICATION / GMAIL / observer name)
+          source: details.source || null
+        };
       })
     });
   });
@@ -961,9 +1019,12 @@ export function registerPollerRoutes(server, ctx) {
         deviceName: dev ? (dev.device_name || dev.device_model) : null,
         deviceActive: dev ? Boolean(dev.is_active) : false,
         merchantId: r.merchant_id || null,
-        sender: maskSmsSender(d.sender),
+        ...observationSenderFields(d),
         status: ['ACCEPTED', 'REJECTED', 'NEEDS_REVIEW'].includes(d.status) ? d.status : 'NEEDS_REVIEW',
+        outcome: d.outcome || legacyHubOutcome(d),
         reason: d.reason || null,
+        sessionId: d.sessionId || null,
+        orderId: d.orderId || null,
         stage: d.stage ?? null,
         amountPaise: d.amountPaise || null,
         referenceLast4: d.referenceLast4 || null

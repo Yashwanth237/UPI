@@ -55,6 +55,18 @@ describe('Merchant Admin Integration Tests', () => {
     assert.ok(res.text.includes('Gmail Direct API'));
   });
 
+  test('Incoming Bank Credit Alerts keep source, sender, bank and app package apart', async () => {
+    const { text } = await get('/');
+    const head = text.slice(text.indexOf('Incoming Bank Credit Alerts'), text.indexOf('smsHubMessagesBody'));
+    for (const col of ['<th>Source</th>', '<th>Sender</th>', '<th>Bank</th>', '<th>Outcome</th>']) assert.ok(head.includes(col), col);
+    const render = text.slice(text.indexOf('async function fetchSmsHubMessages'), text.indexOf('async function fetchSmsGatewayDevices'));
+    // The package is shown only as technical metadata under Source, never in the Sender cell.
+    assert.match(render, /via \$\{escapeHtml\(m\.sourcePackage\)\}/);
+    assert.match(render, /escapeHtml\(m\.sender \|\| 'Unknown'\)/);
+    assert.doesNotMatch(render, /m\.sender \|\| m\.sourcePackage|m\.sourcePackage \|\| m\.sender/);
+    for (const outcome of ['ACCEPTED', 'REJECTED', 'PENDING_REVIEW', 'DUPLICATE', 'NO_MATCHING_CHECKOUT']) assert.ok(render.includes(outcome), outcome);
+  });
+
   test('GET /api/admin/tickets requires the admin token', async () => {
     const anonymous = await get('/api/admin/tickets');
     assert.equal(anonymous.status, 401);

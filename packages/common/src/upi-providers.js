@@ -377,6 +377,27 @@ export const ALLOWED_NOTIFICATION_PACKAGES = Object.freeze(
 );
 
 /**
+ * Messaging apps that show SMS from any sender. Their notification carries the SMS text, but not
+ * its originating address (the title is a contact name, a number or a header, as the app chose),
+ * so the package says nothing about who sent the message. The SMS broadcast observation of the
+ * same message carries the real address.
+ */
+export const SMS_RELAY_PACKAGES = Object.freeze([
+  'com.google.android.apps.messaging',
+  'com.samsung.android.messaging',
+  'com.truecaller'
+]);
+
+/**
+ * @param {string} packageName
+ * @returns {boolean}
+ */
+export function isSmsRelayPackage(packageName) {
+  if (!packageName || typeof packageName !== 'string') return false;
+  return SMS_RELAY_PACKAGES.includes(packageName.trim().toLowerCase());
+}
+
+/**
  * Verifies whether a given Android package identifier is an authorized banking/UPI provider.
  * @param {string} packageName
  * @returns {boolean}

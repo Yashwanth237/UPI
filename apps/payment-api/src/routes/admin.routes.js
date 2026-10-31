@@ -1,7 +1,7 @@
 import crypto from 'node:crypto';
 import { HttpServer } from '../server.js';
 import { PaymentStatus, PaymentMethod, SellingMode, AuditActorType, isValidVpa, toRupeesString, deriveCloudflareRoutes, resolveRuntimeUrls, resolveGmailRedirectUri, createOAuthState, validateOutboundWebhookUrl } from '@youpi/common';
-import { PaymentVerificationPipeline } from '@youpi/core';
+import { PaymentVerificationPipeline, classifyObservationOutcome } from '@youpi/core';
 import { DEMO_RECEIVING_VPA } from '@youpi/db';
 import { globalTunnelManager } from '../services/tunnel-manager.js';
 import { formatQrDataUrl } from '../services/whatsapp-berry.service.js';
@@ -2214,6 +2214,8 @@ export function registerAdminRoutes(server, ctx) {
           injectionTimestamp: Date.now(),
           simulationMessageId: messageId,
           exactRawMessage: rawContent,
+          senderIdentity: pipelineResult.senderIdentity || null,
+          outcome: classifyObservationOutcome(pipelineResult),
           processingResult: pipelineResult.status,
           finalVerificationResult: pipelineResult.stages?.stage4?.status || 'UNKNOWN',
           securityResult: pipelineResult.stages?.stage5?.status || 'UNKNOWN',
@@ -2254,8 +2256,11 @@ export function registerAdminRoutes(server, ctx) {
         timestamp: r.created_at,
         source: details.source || 'UNKNOWN',
         sender: details.sender || '',
+        senderTrustStatus: details.senderIdentity?.senderTrustStatus || null,
+        bankName: details.senderIdentity?.bankName || null,
         sessionId: details.targetSession || null,
         result: details.processingResult || 'UNKNOWN',
+        outcome: details.outcome || null,
         failingReason: details.failingReason || null,
         details
       };

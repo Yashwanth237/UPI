@@ -5,7 +5,7 @@ import { Database } from '@youpi/db';
 import { startServer as startPaymentApi } from '../../../payment-api/src/index.js';
 import { startGmailObserver } from '../index.js';
 import { BankEmailParser } from '../parser.js';
-import { GmailPoller, extractBodyFromGmailPayload, isFinalSubmissionFailure, MAX_RAW_TEXT_CHARS, UNRESOLVED_RETRY_WINDOW_MS } from '../gmail-poller.js';
+import { GmailPoller, buildGmailSearchQuery, extractBodyFromGmailPayload, isFinalSubmissionFailure, MAX_RAW_TEXT_CHARS, UNRESOLVED_RETRY_WINDOW_MS } from '../gmail-poller.js';
 import { PaymentStatus, createOAuthState } from '@youpi/common';
 import { TEST_OBSERVER_TOKEN } from '../../../../scripts/test-support.js';
 
@@ -315,5 +315,16 @@ describe('Gmail poll outcome diagnostics (no Google calls)', () => {
     assert.equal(d.lastPollOutcome, 'MESSAGES_FOUND');
     assert.equal(d.lastMatchCount, 2);
     assert.equal(d.lastProcessedCount, 2);
+  });
+});
+
+describe('Gmail search query', () => {
+  test('without GMAIL_TRUSTED_SENDERS the query is the subject search only', () => {
+    assert.equal(buildGmailSearchQuery({}), 'subject:(credit OR credited OR received OR upi OR deposit OR alert)');
+  });
+
+  test('with GMAIL_TRUSTED_SENDERS only those senders are searched; malformed entries are dropped', () => {
+    const q = buildGmailSearchQuery({ GMAIL_TRUSTED_SENDERS: 'Alerts@Bank.bank.in, not-an-email, x@y.in) OR (z' });
+    assert.equal(q, 'from:(alerts@bank.bank.in) subject:(credit OR credited OR received OR upi OR deposit OR alert)');
   });
 });
