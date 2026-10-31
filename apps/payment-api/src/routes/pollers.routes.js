@@ -92,7 +92,10 @@ export function observationSenderFields(stored, pipeResult) {
  */
 function legacyHubOutcome(d) {
   if (d.status === 'ACCEPTED') return 'ACCEPTED';
-  return classifyObservationOutcome({ status: d.status === 'REJECTED' ? 'REJECTED' : 'UNRESOLVED', failingCondition: d.reason });
+  return classifyObservationOutcome(
+    { status: d.status === 'REJECTED' ? 'REJECTED' : 'UNRESOLVED', failingCondition: d.reason },
+    observationSenderFields(d).source
+  );
 }
 
 /**
@@ -139,11 +142,18 @@ function recordObservationNotSettled(ctx, { channel, source, sender, receivingAc
  * @param {any} ctx
  * @param {{ device: any, sender?: string, receivingAccountId?: string, rawText?: string, pipeResult: any, receivedAt?: Date, amountPaise?: bigint|number }} input
  */
-function recordAndroidSmsEvent(ctx, { device, sender, receivingAccountId, rawText, pipeResult, receivedAt, amountPaise }) {
+function recordAndroidSmsEvent(ctx, { device, sender, receivingAccountId, rawText, pipeResult, receivedAt, amountPaise, bankRef }) {
   if (!ctx.auditRepo || !pipeResult || !device) return;
   try {
-    const reference = String(pipeResult.reference || pipeResult.stages?.stage3?.details?.reference || pipeResult.bankReferenceNumber || '');
+    const reference = String(pipeResult.reference || pipeResult.stages?.stage3?.details?.reference || pipeResult.bankReferenceNumber || bankRef || '');
     const status = androidHubStatus(pipeResult);
+    let outcome = classifyObservationOutcome(pipeResult);
+    // A messaging-app copy of an alert this account already received is a duplicate copy, not a
+    // failed payment. Display only: the copy was refused at stage 2 either way.
+    if (outcome === 'UNVERIFIED_NOTIFICATION_SENDER' && reference && receivingAccountId &&
+        ctx.db.queryOne('SELECT 1 FROM payment_observations WHERE receiving_account_id = ? AND bank_reference_number = ? LIMIT 1', [receivingAccountId, reference])) {
+      outcome = 'DUPLICATE';
+    }
     ctx.auditRepo.log({
       merchantId: device.merchant_id || null,
       entityType: 'ANDROID_DEVICE',
@@ -152,7 +162,7 @@ function recordAndroidSmsEvent(ctx, { device, sender, receivingAccountId, rawTex
       actorType: 'OBSERVER',
       details: {
         status,
-        outcome: classifyObservationOutcome(pipeResult),
+        outcome,
         reason: status === 'ACCEPTED' ? 'VERIFIED' : (pipeResult.stages?.stage6?.outcomeStatus || pipeResult.failingCondition || 'UNRESOLVED_OBSERVATION'),
         stage: pipeResult.failingStage ?? null,
         ...observationSenderFields({ sender }, pipeResult),
@@ -792,7 +802,7 @@ export function registerPollerRoutes(server, ctx) {
       });
       recordAndroidSmsEvent(ctx, {
         device, sender: smsSender, receivingAccountId, rawText, pipeResult,
-        receivedAt: observedAt, amountPaise
+        receivedAt: observedAt, amountPaise, bankRef
       });
     }
 

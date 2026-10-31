@@ -5459,8 +5459,9 @@
           tbody.innerHTML = '<tr><td colspan="8" style="text-align:center; color:var(--text-muted); font-size:0.8rem; padding:1rem;">No bank credit alerts uploaded yet. Personal SMS stay on the phone and never appear here.</td></tr>';
           return;
         }
-        const colors = { ACCEPTED: 'badge-success', REJECTED: 'badge-danger', PENDING_REVIEW: 'badge-warning', DUPLICATE: 'badge-info', NO_MATCHING_CHECKOUT: 'badge-warning' };
-        const label = { ACCEPTED: 'ACCEPTED', REJECTED: 'REJECTED', PENDING_REVIEW: 'PENDING REVIEW', DUPLICATE: 'DUPLICATE', NO_MATCHING_CHECKOUT: 'NO MATCHING CHECKOUT' };
+        // Copies and incomplete notifications are neutral: the payment itself is judged by the SMS row.
+        const colors = { ACCEPTED: 'badge-success', REJECTED: 'badge-danger', PENDING_REVIEW: 'badge-warning', DUPLICATE: 'badge-info', NO_MATCHING_CHECKOUT: 'badge-warning', UNVERIFIED_NOTIFICATION_SENDER: 'badge-info', INCOMPLETE_NOTIFICATION: 'badge-info', INVALID_BANK_SENDER: 'badge-danger' };
+        const label = { ACCEPTED: 'ACCEPTED', REJECTED: 'REJECTED', PENDING_REVIEW: 'PENDING REVIEW', DUPLICATE: 'DUPLICATE', NO_MATCHING_CHECKOUT: 'NO MATCHING CHECKOUT', UNVERIFIED_NOTIFICATION_SENDER: 'UNVERIFIED NOTIFICATION SENDER', INCOMPLETE_NOTIFICATION: 'INCOMPLETE NOTIFICATION', INVALID_BANK_SENDER: 'INVALID BANK SENDER' };
         const trustColor = { VERIFIED: '#22c55e', UNVERIFIED: '#f59e0b', UNKNOWN: 'var(--text-muted)' };
         tbody.innerHTML = msgs.map(m => {
           const when = m.receivedAt || m.uploadedAt;
@@ -5477,7 +5478,7 @@
           <td><code style="font-size:0.72rem;">${escapeHtml(m.sender || 'Unknown')}</code><br><span style="font-size:0.65rem; font-weight:700; color:${trustColor[trust] || 'var(--text-muted)'};">${escapeHtml(trust)}</span></td>
           <td><span style="font-size:0.75rem;">${escapeHtml(m.bankName || 'Unknown')}</span></td>
           <td><span style="font-size:0.75rem;">${escapeHtml(amount + ref)}</span></td>
-          <td><span class="badge ${colors[outcome] || 'badge-info'}">${escapeHtml(label[outcome] || outcome)}</span></td>
+          <td><span class="badge ${colors[outcome] || 'badge-info'}">${escapeHtml(outcome === 'DUPLICATE' && m.source === 'NOTIFICATION' ? 'DUPLICATE NOTIFICATION' : (label[outcome] || outcome))}</span></td>
           <td><span style="font-size:0.72rem; color:var(--text-muted);">${escapeHtml(m.reason || '')}${m.merchantId ? '<br>merchant ' + escapeHtml(String(m.merchantId).slice(0, 8)) : ''}${checkout}</span></td>
         </tr>`;
         }).join('');

@@ -98,18 +98,36 @@ const DUPLICATE_REASONS = new Set([
   'REFERENCE_ALREADY_USED'
 ]);
 
+/** Stage-2 refusals of the sender itself (SMS header, email domain, app package). */
+const INVALID_SENDER_REASONS = new Set([
+  'PERSONAL_SMS_REJECTED',
+  'INVALID_SMS_SENDER',
+  'UNTRUSTED_SMS_SENDER',
+  'MISSING_SMS_SENDER',
+  'INVALID_EMAIL_DOMAIN',
+  'UNTRUSTED_EMAIL_SENDER',
+  'UNTRUSTED_NOTIFICATION_PACKAGE'
+]);
+
+/** Stage-3 refusals that, for a notification, mean the app showed only part of the alert. */
+const INCOMPLETE_TEXT_REASONS = new Set(['MISSING_RAW_TEXT', 'MISSING_CREDIT_INDICATOR', 'MISSING_CURRENCY_INDICATOR']);
+
 /**
- * One outcome per observation for display, kept apart so a duplicate or an alert with no open
- * checkout is not read as a plain rejection or as a payment:
- * ACCEPTED | REJECTED | PENDING_REVIEW | DUPLICATE | NO_MATCHING_CHECKOUT.
- * Only a VERIFIED pipeline result is ACCEPTED.
- * @param {{ status?: string, failingCondition?: string, stages?: any } | null | undefined} pipeResult
+ * One outcome per observation for display, kept apart so a duplicate copy or an alert with no
+ * open checkout is not read as a failed payment: ACCEPTED | DUPLICATE | NO_MATCHING_CHECKOUT |
+ * UNVERIFIED_NOTIFICATION_SENDER | INCOMPLETE_NOTIFICATION | INVALID_BANK_SENDER | REJECTED |
+ * PENDING_REVIEW. Only a VERIFIED pipeline result is ACCEPTED.
+ * @param {{ status?: string, failingCondition?: string, stages?: any, senderIdentity?: { source?: string } } | null | undefined} pipeResult
+ * @param {string} [source] SMS | NOTIFICATION | GMAIL; defaults to the result's sender identity
  */
-export function classifyObservationOutcome(pipeResult) {
+export function classifyObservationOutcome(pipeResult, source = pipeResult?.senderIdentity?.source) {
   if (pipeResult?.status === 'VERIFIED') return 'ACCEPTED';
   const reason = pipeResult?.stages?.stage6?.outcomeStatus || pipeResult?.failingCondition || null;
   if (reason && DUPLICATE_REASONS.has(reason)) return 'DUPLICATE';
   if (reason === 'NO_ACTIVE_SESSION') return 'NO_MATCHING_CHECKOUT';
+  if (reason === 'UNVERIFIED_NOTIFICATION_SENDER') return 'UNVERIFIED_NOTIFICATION_SENDER';
+  if (reason && INVALID_SENDER_REASONS.has(reason)) return 'INVALID_BANK_SENDER';
+  if (source === 'NOTIFICATION' && reason && INCOMPLETE_TEXT_REASONS.has(reason)) return 'INCOMPLETE_NOTIFICATION';
   if (pipeResult?.status === 'REJECTED') return 'REJECTED';
   return 'PENDING_REVIEW';
 }

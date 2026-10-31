@@ -127,7 +127,7 @@ describe('Bank SMS credit indicators and sender identity', () => {
         assert.equal(row.sender, null);
         assert.equal(row.sourcePackage, pkg);
         assert.equal(row.source, 'NOTIFICATION');
-        assert.equal(row.outcome, 'REJECTED');
+        assert.equal(row.outcome, 'UNVERIFIED_NOTIFICATION_SENDER', 'no SMS with this UTR yet, so not a known copy');
       });
     }
 
@@ -171,6 +171,7 @@ describe('Bank SMS credit indicators and sender identity', () => {
       const row = await hubRowForAmount('4500');
       assert.equal(row.sender, null);
       assert.equal(row.senderTrustStatus, 'UNKNOWN');
+      assert.equal(row.outcome, 'INVALID_BANK_SENDER');
     });
 
     test('a Gmail sender keeps its address, and the bank comes only from its .bank.in domain', () => {
@@ -213,9 +214,54 @@ describe('Bank SMS credit indicators and sender identity', () => {
       assert.equal((await hub()).messages[0].outcome, 'DUPLICATE');
     });
 
-    test('outcome classification keeps the five outcomes apart', () => {
+    test('one genuine bank SMS, its phone retry and its messaging-app copies settle exactly one payment', async () => {
+      const s = openCheckout('CR-ONCE-1', 4800n);
+      const body = 'Rs 48.00 credited to your A/c XX1234 via UPI Ref 612345670481';
+      assert.equal((await phone.submitSms({ sender: 'AX-AIRBNK-S', body })).status, 200);
+      assert.equal(status(s.id), PaymentStatus.SUCCESS);
+
+      // The phone retries the upload (later receive time) and two apps show the same SMS.
+      assert.notEqual((await phone.submitSms({ sender: 'AX-AIRBNK-S', body, receivedAt: Date.now() + 5000 })).status, 200);
+      for (const pkg of ['com.google.android.apps.messaging', 'com.truecaller']) {
+        const copy = await phone.submitObservation({ rawNotification: { title: 'AX-AIRBNK-S', text: body, package: pkg } });
+        assert.equal(copy.body.reason, 'UNVERIFIED_NOTIFICATION_SENDER');
+      }
+
+      const attributed = db.queryOne('SELECT COUNT(*) AS n FROM payment_observations WHERE bank_reference_number = ? AND attributed_payment_id IS NOT NULL', ['612345670481']);
+      assert.equal(Number(attributed.n), 1, 'credited once');
+      const rows = (await hub()).messages.filter(m => m.amountPaise === '4800');
+      assert.deepEqual(rows.map(r => r.outcome).sort(), ['ACCEPTED', 'DUPLICATE', 'DUPLICATE', 'DUPLICATE']);
+      const copies = rows.filter(r => r.source === 'NOTIFICATION');
+      assert.equal(copies.length, 2);
+      for (const c of copies) assert.equal(c.sender, null, 'the package is not shown as the bank sender');
+      assert.deepEqual(copies.map(c => c.sourcePackage).sort(), ['com.google.android.apps.messaging', 'com.truecaller']);
+    });
+
+    test('two genuine payments with different UTRs are not merged', async () => {
+      const a = openCheckout('CR-TWO-A', 4900n);
+      assert.equal((await phone.submitSms({ sender: 'VM-HDFCBK', body: 'Rs 49.00 credited to your A/c XX1234 via UPI Ref 612345670491' })).status, 200);
+      const b = openCheckout('CR-TWO-B', 4900n);
+      assert.equal((await phone.submitSms({ sender: 'VM-HDFCBK', body: 'Rs 49.00 credited to your A/c XX1234 via UPI Ref 612345670492' })).status, 200);
+      assert.equal(status(a.id), PaymentStatus.SUCCESS);
+      assert.equal(status(b.id), PaymentStatus.SUCCESS);
+    });
+
+    test('a bank-app notification missing its amount is INCOMPLETE_NOTIFICATION, with the accurate reason', async () => {
+      const s = openCheckout('CR-INCOMPLETE-1', 5000n);
+      const res = await phone.submitObservation({ rawNotification: { title: 'Payment received', text: 'Tap to view details', package: 'com.phonepe.app' } });
+      assert.equal(res.status, 400);
+      assert.equal(res.body.reason, 'MISSING_CURRENCY_INDICATOR');
+      assert.notEqual(status(s.id), PaymentStatus.SUCCESS);
+      assert.equal((await hub()).messages[0].outcome, 'INCOMPLETE_NOTIFICATION');
+    });
+
+    test('outcome classification keeps the outcomes apart', () => {
       assert.equal(classifyObservationOutcome({ status: 'VERIFIED' }), 'ACCEPTED');
-      assert.equal(classifyObservationOutcome({ status: 'REJECTED', failingCondition: 'PERSONAL_SMS_REJECTED' }), 'REJECTED');
+      assert.equal(classifyObservationOutcome({ status: 'REJECTED', failingCondition: 'PERSONAL_SMS_REJECTED' }), 'INVALID_BANK_SENDER');
+      assert.equal(classifyObservationOutcome({ status: 'REJECTED', failingCondition: 'UNVERIFIED_NOTIFICATION_SENDER' }), 'UNVERIFIED_NOTIFICATION_SENDER');
+      assert.equal(classifyObservationOutcome({ status: 'REJECTED', failingCondition: 'MISSING_CURRENCY_INDICATOR' }, 'NOTIFICATION'), 'INCOMPLETE_NOTIFICATION');
+      assert.equal(classifyObservationOutcome({ status: 'REJECTED', failingCondition: 'MISSING_CURRENCY_INDICATOR' }, 'SMS'), 'REJECTED');
+      assert.equal(classifyObservationOutcome({ status: 'REJECTED', failingCondition: 'DEBIT_NOTIFICATION' }), 'REJECTED');
       assert.equal(classifyObservationOutcome({ status: 'REJECTED', failingCondition: 'DUPLICATE_OBSERVATION' }), 'DUPLICATE');
       assert.equal(classifyObservationOutcome({ status: 'REJECTED', failingCondition: 'REFERENCE_ALREADY_USED' }), 'DUPLICATE');
       assert.equal(classifyObservationOutcome({ status: 'UNRESOLVED', failingCondition: 'NO_ACTIVE_SESSION' }), 'NO_MATCHING_CHECKOUT');

@@ -64,7 +64,8 @@ describe('Merchant Admin Integration Tests', () => {
     assert.match(render, /via \$\{escapeHtml\(m\.sourcePackage\)\}/);
     assert.match(render, /escapeHtml\(m\.sender \|\| 'Unknown'\)/);
     assert.doesNotMatch(render, /m\.sender \|\| m\.sourcePackage|m\.sourcePackage \|\| m\.sender/);
-    for (const outcome of ['ACCEPTED', 'REJECTED', 'PENDING_REVIEW', 'DUPLICATE', 'NO_MATCHING_CHECKOUT']) assert.ok(render.includes(outcome), outcome);
+    for (const outcome of ['ACCEPTED', 'REJECTED', 'PENDING_REVIEW', 'DUPLICATE', 'NO_MATCHING_CHECKOUT', 'UNVERIFIED_NOTIFICATION_SENDER', 'INCOMPLETE_NOTIFICATION', 'INVALID_BANK_SENDER']) assert.ok(render.includes(outcome), outcome);
+    assert.ok(render.includes('DUPLICATE NOTIFICATION'), 'a notification copy is labelled as a copy, not a failure');
   });
 
   test('GET /api/admin/tickets requires the admin token', async () => {
