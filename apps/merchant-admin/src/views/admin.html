@@ -3024,6 +3024,36 @@
             </div>
           </div>
 
+          <div style="margin-bottom:1.5rem;">
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:0.5rem;">
+              <div style="font-size:0.88rem; font-weight:700; color:#f1f5f9;">Incoming Bank Credit Alerts</div>
+              <button class="btn btn-secondary" style="font-size:0.7rem; padding:0.2rem 0.5rem;" onclick="fetchSmsHubMessages()">🔄 Refresh</button>
+            </div>
+            <div id="smsHubOnPhone" style="font-size:0.75rem; color:var(--text-muted); margin-bottom:0.5rem;"></div>
+            <div style="overflow-x:auto;">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Received</th>
+                    <th>Device</th>
+                    <th>Sender</th>
+                    <th>Amount</th>
+                    <th>Status</th>
+                    <th>Reason</th>
+                  </tr>
+                </thead>
+                <tbody id="smsHubMessagesBody">
+                  <tr>
+                    <td colspan="6" style="text-align:center; color:var(--text-muted); padding:1rem;">Loading…</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+            <div style="font-size:0.72rem; color:var(--text-muted); margin-top:0.4rem;">
+              ACCEPTED means the alert matched an open checkout. SMS is supporting evidence only. Message text is never stored or shown.
+            </div>
+          </div>
+
           <!-- Interactive Test Bank SMS Sender -->
           <div style="background:#090d16; border:1px solid var(--border); border-radius:0.5rem; padding:1rem;">
             <div style="font-size:0.85rem; font-weight:700; color:#38bdf8; margin-bottom:0.5rem;">🧪 Test Bank SMS
@@ -5400,8 +5430,49 @@
     // --- ANDROID SMS OBSERVER FUNCTIONS ---
     async function fetchObserversStatus() {
       fetchSmsGatewayDevices();
+      fetchSmsHubMessages();
       fetchSmsPairQr();
       fetchGmailCredentials();
+    }
+
+    // Android SMS Hub: uploaded credit alerts with their outcome. Never shows message text.
+    async function fetchSmsHubMessages() {
+      const tbody = document.getElementById('smsHubMessagesBody');
+      const summary = document.getElementById('smsHubOnPhone');
+      if (!tbody) return;
+      try {
+        const res = await fetch(`${API_BASE}/api/v1/admin/sms-gateway/messages?limit=50`);
+        if (!res.ok) return;
+        const data = await res.json();
+        const pending = (data.onPhone || []).reduce((n, d) => n + (d.pendingUploads || 0), 0);
+        const held = (data.onPhone || []).reduce((n, d) => n + (d.awaitingReview || 0), 0);
+        if (summary) {
+          summary.textContent = (data.onPhone || []).length
+            ? `On the phone: ${pending} received and waiting to upload (RECEIVED/VALIDATING), ${held} held for review on the device.`
+            : 'On the phone: no delivery report yet (needs app 1.1.0+ and a heartbeat since the API started).';
+        }
+        const msgs = data.messages || [];
+        if (!msgs.length) {
+          tbody.innerHTML = '<tr><td colspan="6" style="text-align:center; color:var(--text-muted); font-size:0.8rem; padding:1rem;">No bank credit alerts uploaded yet. Personal SMS stay on the phone and never appear here.</td></tr>';
+          return;
+        }
+        const colors = { ACCEPTED: 'badge-success', REJECTED: 'badge-danger', NEEDS_REVIEW: 'badge-warning' };
+        const label = { ACCEPTED: 'ACCEPTED', REJECTED: 'REJECTED', NEEDS_REVIEW: 'NEEDS REVIEW' };
+        tbody.innerHTML = msgs.map(m => {
+          const when = m.receivedAt || m.uploadedAt;
+          const amount = m.amountPaise ? `₹${(Number(m.amountPaise) / 100).toFixed(2)}` : '—';
+          const ref = m.referenceLast4 ? ` · ref …${m.referenceLast4}` : '';
+          return `
+        <tr>
+          <td><span style="font-size:0.75rem;">${escapeHtml(when ? new Date(when).toLocaleString() : '-')}</span></td>
+          <td><span style="font-size:0.75rem;">${escapeHtml(m.deviceName || (m.deviceId || '').slice(0, 8))}${m.deviceActive ? '' : ' (inactive)'}</span></td>
+          <td><code style="font-size:0.72rem;">${escapeHtml(m.sender || '-')}</code></td>
+          <td><span style="font-size:0.75rem;">${escapeHtml(amount + ref)}</span></td>
+          <td><span class="badge ${colors[m.status] || 'badge-info'}">${escapeHtml(label[m.status] || m.status)}</span></td>
+          <td><span style="font-size:0.72rem; color:var(--text-muted);">${escapeHtml(m.reason || '')}${m.merchantId ? '<br>merchant ' + escapeHtml(String(m.merchantId).slice(0, 8)) : ''}</span></td>
+        </tr>`;
+        }).join('');
+      } catch (e) { }
     }
 
     async function fetchSmsGatewayDevices() {

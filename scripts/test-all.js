@@ -33,6 +33,7 @@ const testFiles = [
   'apps/android-observer-app/__tests__/android-outbox-policy.test.js',
   'apps/payment-api/src/__tests__/android-lan-pairing.test.js',
   'apps/payment-api/src/__tests__/android-pairing-and-telemetry.test.js',
+  'apps/payment-api/src/__tests__/android-sms-hub.test.js',
   'apps/control-center/src/__tests__/control-center.test.js',
   'apps/payment-api/src/__tests__/payment-api.test.js',
   'apps/payment-api/src/__tests__/auth-guard.test.js',

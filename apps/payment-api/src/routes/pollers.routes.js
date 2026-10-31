@@ -31,6 +31,38 @@ function redactPipeline(result) {
 
 /** Audit action for an observation the pipeline did not settle. */
 export const OBSERVATION_NOT_SETTLED = 'OBSERVATION_NOT_SETTLED';
+/** Audit action for every credit-like SMS a paired Android phone uploaded (Android SMS Hub). */
+export const ANDROID_SMS_EVENT = 'ANDROID_SMS_EVENT';
+
+/**
+ * A sender as it may be stored or shown: bank header codes ("VM-HDFCBK") unchanged; anything that
+ * is a phone number (no letters) reduced to its last 4 digits, since it identifies a person.
+ * @param {unknown} sender
+ */
+export function maskSmsSender(sender) {
+  if (typeof sender !== 'string' || !sender.trim()) return null;
+  const s = sender.trim().slice(0, 80);
+  if (/[a-zA-Z]/.test(s)) return s;
+  const digits = s.replace(/\D/g, '');
+  return digits.length > 4 ? `number ••••${digits.slice(-4)}` : 'number';
+}
+
+/** Removes runs of 6+ digits (phone numbers, UTRs, account numbers) from text sent to a client. */
+export function maskLongDigits(text) {
+  return typeof text === 'string' ? text.replace(/\+?\d[\d\s-]{4,}\d/g, m => (m.replace(/\D/g, '').length >= 6 ? '••••' : m)) : text;
+}
+
+/**
+ * Android SMS Hub status of an uploaded SMS. ACCEPTED: verified against an open checkout.
+ * REJECTED: refused (sender, fraud, debit, malformed). NEEDS_REVIEW: a credit the gateway read
+ * but could not settle (no matching checkout, ambiguous), worth a person's look.
+ * @param {{ status?: string }} pipeResult
+ */
+export function androidHubStatus(pipeResult) {
+  if (pipeResult?.status === 'VERIFIED') return 'ACCEPTED';
+  if (pipeResult?.status === 'REJECTED') return 'REJECTED';
+  return 'NEEDS_REVIEW';
+}
 
 /**
  * Records why an observation did not settle a payment, without its message text, so a missing
@@ -54,7 +86,7 @@ function recordObservationNotSettled(ctx, { channel, source, sender, receivingAc
       details: {
         channel,
         source,
-        sender: typeof sender === 'string' ? sender.slice(0, 80) : null,
+        sender: maskSmsSender(sender),
         receivingAccountId: receivingAccountId || null,
         status: pipeResult.status || 'UNRESOLVED',
         stage: pipeResult.failingStage ?? null,
@@ -67,6 +99,54 @@ function recordObservationNotSettled(ctx, { channel, source, sender, receivingAc
   } catch {
     // Diagnostics must never change the outcome of an observation.
   }
+}
+
+/**
+ * One Android SMS Hub row per credit-like SMS a paired phone uploaded: device, merchant, masked
+ * sender, hub status and reason, parsed amount, last 4 of the reference. Never the message text.
+ * @param {any} ctx
+ * @param {{ device: any, sender?: string, receivingAccountId?: string, rawText?: string, pipeResult: any, receivedAt?: Date, amountPaise?: bigint|number }} input
+ */
+function recordAndroidSmsEvent(ctx, { device, sender, receivingAccountId, rawText, pipeResult, receivedAt, amountPaise }) {
+  if (!ctx.auditRepo || !pipeResult || !device) return;
+  try {
+    const reference = String(pipeResult.reference || pipeResult.stages?.stage3?.details?.reference || pipeResult.bankReferenceNumber || '');
+    const status = androidHubStatus(pipeResult);
+    ctx.auditRepo.log({
+      merchantId: device.merchant_id || null,
+      entityType: 'ANDROID_DEVICE',
+      entityId: device.id,
+      action: ANDROID_SMS_EVENT,
+      actorType: 'OBSERVER',
+      details: {
+        status,
+        reason: status === 'ACCEPTED' ? 'VERIFIED' : (pipeResult.stages?.stage6?.outcomeStatus || pipeResult.failingCondition || 'UNRESOLVED_OBSERVATION'),
+        stage: pipeResult.failingStage ?? null,
+        sender: maskSmsSender(sender),
+        receivingAccountId: receivingAccountId || null,
+        amountPaise: (amountPaise ?? pipeResult.amountPaise) != null ? String(amountPaise ?? pipeResult.amountPaise) : null,
+        referenceLast4: reference ? reference.slice(-4) : null,
+        receivedAt: receivedAt instanceof Date && !isNaN(receivedAt.getTime()) ? receivedAt.toISOString() : null,
+        textLength: typeof rawText === 'string' ? rawText.length : 0
+      }
+    });
+  } catch {
+    // The hub is diagnostics; it must never change the outcome of an observation.
+  }
+}
+
+/** Pipeline result for an Android client: as redactPipeline, plus no phone numbers in stage 2. */
+function redactAndroidPipeline(result) {
+  const walk = (value, key) => {
+    if (key === 'sender') return maskSmsSender(value);
+    if (typeof value === 'string') return key === 'details' || key === 'failingReason' ? maskLongDigits(value) : value;
+    if (Array.isArray(value)) return value.map(v => walk(v));
+    if (value && typeof value === 'object' && !(value instanceof Date)) {
+      return Object.fromEntries(Object.entries(value).map(([k, v]) => [k, walk(v, k)]));
+    }
+    return value;
+  };
+  return walk(redactPipeline(result));
 }
 
 /**
@@ -657,6 +737,10 @@ export function registerPollerRoutes(server, ctx) {
       recordObservationNotSettled(ctx, {
         channel: 'ANDROID', source: 'SMS', sender: body.sender || req.headers['x-sender'] || body.rawNotification?.package, receivingAccountId, rawText, pipeResult
       });
+      recordAndroidSmsEvent(ctx, {
+        device, sender: body.sender || req.headers['x-sender'] || body.rawNotification?.package, receivingAccountId, rawText, pipeResult,
+        receivedAt: observedAt, amountPaise
+      });
     }
 
     if (pipeResult.status === 'REJECTED' && pipeResult.failingCondition === 'FRAUDULENT_PAYMENT_INJECTION') {
@@ -677,7 +761,7 @@ export function registerPollerRoutes(server, ctx) {
         accepted: true,
         observationId: pipeResult.messageId || pipeResult.stages?.stage6?.details?.observationId,
         attribution: pipeResult.stages?.stage6?.details || pipeResult,
-        pipeline: redactPipeline(pipeResult)
+        pipeline: redactAndroidPipeline(pipeResult)
       });
       return;
     }
@@ -688,8 +772,8 @@ export function registerPollerRoutes(server, ctx) {
         accepted: false,
         status: 'REJECTED',
         reason: pipeResult.failingCondition,
-        error: pipeResult.failingReason || pipeResult.details,
-        pipeline: redactPipeline(pipeResult)
+        error: maskLongDigits(pipeResult.failingReason || pipeResult.details),
+        pipeline: redactAndroidPipeline(pipeResult)
       });
       return;
     }
@@ -715,8 +799,8 @@ export function registerPollerRoutes(server, ctx) {
       status: pipeResult.status || 'UNRESOLVED',
       reason: pipeResult.stages?.stage6?.outcomeStatus || pipeResult.failingCondition || 'UNRESOLVED_OBSERVATION',
       observationId: pipeResult.messageId || pipeResult.stages?.stage6?.details?.observationId,
-      error: pipeResult.failingReason || 'Payment observation could not be verified or attributed.',
-      pipeline: redactPipeline(pipeResult)
+      error: maskLongDigits(pipeResult.failingReason || 'Payment observation could not be verified or attributed.'),
+      pipeline: redactAndroidPipeline(pipeResult)
     });
   };
 
@@ -852,6 +936,45 @@ export function registerPollerRoutes(server, ctx) {
         return { id: r.id, observationId: r.entity_id, at: r.created_at, ...details };
       })
     });
+  });
+
+  // GET /api/v1/admin/sms-gateway/messages (admin only, via the /api/v1/admin/ guard)
+  // Android SMS Hub: credit-like SMS the paired phones uploaded, newest first, with hub status
+  // (ACCEPTED / REJECTED / NEEDS_REVIEW) and reason. Never the message text; senders that are
+  // phone numbers are masked. Personal SMS never reach this list: the phone keeps them.
+  server.get('/api/v1/admin/sms-gateway/messages', async (req, res) => {
+    const limit = Math.min(Math.max(Number(req.query.limit) || 50, 1), 200);
+    const rows = ctx.db.query(
+      'SELECT id, merchant_id, entity_id, details, created_at FROM audit_logs WHERE action = ? ORDER BY created_at DESC LIMIT ?',
+      [ANDROID_SMS_EVENT, limit]
+    );
+    const names = new Map((ctx.db.query('SELECT id, device_name, device_model, is_active FROM android_devices') || []).map(d => [d.id, d]));
+    const messages = rows.map(r => {
+      let d = {};
+      try { d = JSON.parse(r.details || '{}'); } catch {}
+      const dev = names.get(r.entity_id);
+      return {
+        id: r.id,
+        uploadedAt: r.created_at,
+        receivedAt: d.receivedAt || null,
+        deviceId: r.entity_id,
+        deviceName: dev ? (dev.device_name || dev.device_model) : null,
+        deviceActive: dev ? Boolean(dev.is_active) : false,
+        merchantId: r.merchant_id || null,
+        sender: maskSmsSender(d.sender),
+        status: ['ACCEPTED', 'REJECTED', 'NEEDS_REVIEW'].includes(d.status) ? d.status : 'NEEDS_REVIEW',
+        reason: d.reason || null,
+        stage: d.stage ?? null,
+        amountPaise: d.amountPaise || null,
+        referenceLast4: d.referenceLast4 || null
+      };
+    });
+    // RECEIVED / VALIDATING live on the phone until uploaded: reported as counts from each
+    // device's last signed heartbeat (since this API started), not invented per message.
+    const onPhone = [...deviceTelemetry.entries()].map(([deviceId, t]) => ({
+      deviceId, pendingUploads: t.pendingUploads, awaitingReview: t.awaitingReview, smsQueued: t.smsQueued, reportedAt: t.reportedAt
+    }));
+    HttpServer.json(res, 200, { messages, onPhone });
   });
 
   // GET /api/v1/admin/sms-gateway/devices
