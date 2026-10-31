@@ -58,6 +58,8 @@ const testFiles = [
   'apps/payment-api/src/__tests__/payment-detection-scenarios.test.js',
   'apps/payment-api/src/__tests__/observation-security-and-accounts.test.js',
   'apps/payment-api/src/__tests__/payment-confirmation-diagnostics.test.js',
+  'apps/payment-api/src/__tests__/developer-simulator-queued-session.test.js',
+  'apps/payment-api/src/__tests__/observation-records-e2e.test.js',
   'scripts/chaos-concurrency.test.js',
   'scripts/production-infrastructure.test.js'
 ];
