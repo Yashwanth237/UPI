@@ -2144,6 +2144,20 @@ export function registerAdminRoutes(server, ctx) {
       }
     }
 
+    // Only an ACTIVE or PROCESSING session owns its receiving account's slot and can be settled.
+    // A QUEUED session (slot held by another payment) would pass the pipeline and end UNRESOLVED,
+    // leaving an observation fingerprint that makes a retry of the same UTR fail as a duplicate.
+    if (targetSession && ![PaymentStatus.ACTIVE, PaymentStatus.PROCESSING].includes(targetSession.status)) {
+      HttpServer.json(res, 409, {
+        success: false,
+        error: 'SESSION NOT PROCESSABLE',
+        reason: 'SESSION_NOT_PROCESSABLE',
+        status: targetSession.status,
+        message: `SESSION NOT PROCESSABLE: this session is ${targetSession.status}. Injection is only permitted on ACTIVE or PROCESSING payment sessions.`
+      });
+      return;
+    }
+
     // Two Independent Streams: SMS and GMAIL (Section 8-15)
     // 100% customizable fields - ABSOLUTELY NO SIMULATOR PRE-VALIDATION!
     const rawSource = (body.source || body.stream || 'SMS').toString().trim().toUpperCase();
