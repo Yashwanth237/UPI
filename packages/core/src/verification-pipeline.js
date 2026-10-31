@@ -11,7 +11,7 @@ import {
 } from '@youpi/common';
 import { extractIntelligentAmount } from './bank-sms-parser.js';
 import { ObservationNormalizer } from './normalizer.js';
-import { describeObservationSender, smsHeaderCode } from './observation-identity.js';
+import { describeObservationSender, smsHeaderCode, classifyObservationOutcome, maskSmsSender, summarizePipelineStages } from './observation-identity.js';
 
 /**
  * Universal Institutional Identifier: Every official Indian bank alert domain ends with .bank.in
@@ -128,6 +128,101 @@ export class PaymentVerificationPipeline {
     this.merchantRepo = options.merchantRepo;
     this.server = options.server || null;
     this.eventEmitter = options.eventEmitter || null;
+    /** @type {import('@youpi/db').ObservationRecordRepository | null} */
+    this.observationRecordRepo = options.observationRecordRepo || null;
+  }
+
+  /**
+   * Runs one observation through the six stages, then records the result under its observation
+   * id (observation_records) and tells the admin dashboard. Recording never changes the result.
+   * @param {Parameters<PaymentVerificationPipeline['evaluate']>[0] & {
+   *   entryPoint?: string, deviceId?: string, bankReferenceNumber?: string
+   * }} input
+   */
+  process(input) {
+    const result = this.evaluate(input);
+    result.observationId = result.messageId;
+    result.outcome = this.outcomeOf(input, result);
+    this.recordObservation(input, result);
+    return result;
+  }
+
+  /**
+   * Display outcome of a result. A messaging-app copy of an alert whose UTR this account already
+   * stored is a DUPLICATE copy rather than an unverified sender; it was refused at stage 2 either way.
+   * @param {any} input
+   * @param {any} result
+   */
+  outcomeOf(input, result) {
+    const outcome = classifyObservationOutcome(result);
+    const reference = result.reference || input.bankReferenceNumber || null;
+    if (outcome === 'UNVERIFIED_NOTIFICATION_SENDER' && reference && input.receivingAccountId &&
+        this.db.queryOne('SELECT 1 FROM payment_observations WHERE receiving_account_id = ? AND bank_reference_number = ? LIMIT 1', [input.receivingAccountId, String(reference)])) {
+      return 'DUPLICATE';
+    }
+    return outcome;
+  }
+
+  /**
+   * @param {any} input
+   * @param {any} result
+   */
+  recordObservation(input, result) {
+    if (!this.observationRecordRepo || !result?.messageId) return;
+    // Text with no amount that matched nothing (personal, promotional) is routine: not kept.
+    if (result.status === 'UNRESOLVED' && !result.amountPaise) return;
+    try {
+      const target = result.session?.id ? this.sessionRepo.findById(result.session.id) : null;
+      const settled = result.status === 'VERIFIED' && target ? target : null;
+      let merchantId = target?.merchantId || input.merchantId || null;
+      if (!merchantId && input.receivingAccountId) {
+        merchantId = this.db.queryOne('SELECT merchant_id FROM payment_receiving_accounts WHERE id = ?', [input.receivingAccountId])?.merchant_id || null;
+      }
+      const reference = result.reference || input.bankReferenceNumber || null;
+      const identity = result.senderIdentity || {};
+      const record = this.observationRecordRepo.create({
+        id: result.messageId,
+        merchantId,
+        deviceId: input.deviceId || null,
+        entryPoint: input.entryPoint || (input.isSimulated ? 'SIMULATOR' : 'OBSERVER'),
+        source: identity.source || result.source,
+        sender: maskSmsSender(identity.sender),
+        sourcePackage: identity.sourcePackage || null,
+        bankName: identity.bankName || null,
+        senderTrustStatus: identity.senderTrustStatus,
+        isSimulated: Boolean(input.isSimulated || input.isTest),
+        receivedAt: result.receivedAt,
+        processingStatus: result.status,
+        outcome: result.outcome,
+        rejectionReason: result.status === 'VERIFIED' ? null : (result.stages?.stage6?.outcomeStatus || result.failingCondition || null),
+        failingStage: result.failingStage ?? null,
+        stages: summarizePipelineStages(result.stages),
+        amountPaise: result.amountPaise,
+        referenceLast4: reference ? String(reference).slice(-4) : null,
+        paymentObservationId: result.stages?.stage6?.details?.observationId || null,
+        targetSessionId: target?.id || null,
+        sessionId: settled?.id || null,
+        orderId: target?.orderId || null,
+        customerId: settled?.customerId || null,
+        paymentStatus: target?.status || null
+      });
+      if (record && this.server?.broadcastSse) {
+        this.server.broadcastSse('admin_counter_events', 'observation_processed', {
+          observationId: record.observationId,
+          merchantId: record.merchantId,
+          entryPoint: record.entryPoint,
+          source: record.source,
+          outcome: record.outcome,
+          processingStatus: record.processingStatus,
+          targetSessionId: record.targetSessionId,
+          sessionId: record.sessionId,
+          customerId: record.customerId
+        });
+      }
+    } catch (err) {
+      // A record is for display; it must never change the outcome of an observation.
+      console.error('[pipeline] could not record observation', result.messageId, err?.message);
+    }
   }
 
   /**
@@ -145,7 +240,7 @@ export class PaymentVerificationPipeline {
    *   merchantId?: string
    * }} input
    */
-  process(input) {
+  evaluate(input) {
     const isTest = Boolean(input.isTest);
     const testModeActive = Boolean(input.testModeActive);
     // Bank credit notifications are a few hundred bytes. Capping the text bounds the cost of
@@ -160,9 +255,11 @@ export class PaymentVerificationPipeline {
     const rawNormalizedSource = (input.source || 'SMS').toUpperCase();
     const isGmailSource = rawNormalizedSource.includes('GMAIL') || rawNormalizedSource.includes('EMAIL');
     const source = isGmailSource ? 'GMAIL' : 'SMS';
+    // The observation's one id: returned to the observer, recorded in observation_records and,
+    // when attributed, the payment_observations row id.
     const messageId = input.messageId || (isTest
-      ? `TEST-${crypto.randomUUID().slice(0, 8)}`
-      : `OBS-${crypto.randomUUID().slice(0, 8)}`);
+      ? `TEST-${crypto.randomUUID()}`
+      : `OBS-${crypto.randomUUID()}`);
 
     let defaultSender = source === 'GMAIL' ? 'alerts@retail.bank.in' : 'BANK-ALERT';
     if (isTest && input.sender === 'TEST') {
@@ -1329,6 +1426,7 @@ export class PaymentVerificationPipeline {
       senderVpa: parsedData.senderVpa,
       bankReferenceNumber: parsedData.bankReferenceNumber
     });
+    if (!this.obsRepo.findById(messageId)) normalized.id = messageId;
 
     const attributionResult = this.attributionEngine
       ? this.attributionEngine.processObservation(normalized)

@@ -1708,7 +1708,9 @@ export function registerCheckoutRoutes(server, ctx) {
       testModeActive: Boolean(body.testModeActive),
       // The text here is always typed by an operator, never a forwarded bank alert. Marking it
       // keeps any SUCCESS it produces flagged livemode:false in the merchant webhook.
-      isSimulated: true
+      isSimulated: true,
+      entryPoint: 'CHECKOUT_SIMULATOR',
+      merchantId: session.merchantId
     });
 
     if (result.status === 'REJECTED' && result.failingCondition === 'FRAUDULENT_PAYMENT_INJECTION') {

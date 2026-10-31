@@ -131,3 +131,71 @@ export function classifyObservationOutcome(pipeResult, source = pipeResult?.send
   if (pipeResult?.status === 'REJECTED') return 'REJECTED';
   return 'PENDING_REVIEW';
 }
+
+/**
+ * A sender as it may be stored or shown: bank header codes ("VM-HDFCBK") unchanged; anything that
+ * is a phone number (no letters) reduced to its last 4 digits, since it identifies a person.
+ * @param {unknown} sender
+ */
+export function maskSmsSender(sender) {
+  if (typeof sender !== 'string' || !sender.trim()) return null;
+  const s = sender.trim().slice(0, 80);
+  if (/[a-zA-Z]/.test(s)) return s;
+  const digits = s.replace(/\D/g, '');
+  return digits.length > 4 ? `number ••••${digits.slice(-4)}` : 'number';
+}
+
+/** Removes runs of 6+ digits (phone numbers, UTRs, account numbers) from text sent to a client. */
+export function maskLongDigits(text) {
+  return typeof text === 'string' ? text.replace(/\+?\d[\d\s-]{4,}\d/g, m => (m.replace(/\D/g, '').length >= 6 ? '••••' : m)) : text;
+}
+
+/** Stage detail keys never stored: message text, and the fraud evidence package that repeats it. */
+const STAGE_DETAIL_DROPPED_KEYS = new Set(['raw', 'body', 'text', 'rawText', 'evidence', 'evidencePackage', 'customerPhone', 'customerEmail']);
+
+/** Stage detail keys kept as they are: generated ids and timestamps. */
+const STAGE_DETAIL_PLAIN_KEYS = new Set(['messageId', 'observationId', 'sessionId', 'paymentSessionId', 'attributedSessionId', 'orderId', 'receivedAt']);
+
+/**
+ * The six stage results of a pipeline run as they may be stored and shown: status, reason and
+ * details, without message text. Long digit runs (UTRs, account and phone numbers) are masked,
+ * except a reference, which keeps its last 4 digits; senders are masked like the hub's.
+ * @param {any} stages
+ * @returns {Record<string, { stage: number, name: string | null, status: string, reason: string | null, outcomeStatus: string | null, details: any }>}
+ */
+export function summarizePipelineStages(stages) {
+  const clean = (value, key, depth = 0) => {
+    if (value === null || value === undefined) return null;
+    if (key === 'sender') return maskSmsSender(value);
+    if (key === 'reference' || key === 'bankReferenceNumber') return value ? `…${String(value).slice(-4)}` : null;
+    // Ids and times are not personal data, and masking their digit runs made them unreadable.
+    if (typeof value === 'string' && STAGE_DETAIL_PLAIN_KEYS.has(key)) return value.slice(0, 120);
+    if (typeof value === 'string') return maskLongDigits(value).slice(0, 500);
+    if (typeof value === 'number' || typeof value === 'boolean') return value;
+    if (typeof value === 'bigint') return value.toString();
+    if (depth >= 2 || typeof value !== 'object' || Array.isArray(value)) return null;
+    const out = {};
+    for (const [k, v] of Object.entries(value)) {
+      if (STAGE_DETAIL_DROPPED_KEYS.has(k)) continue;
+      const c = clean(v, k, depth + 1);
+      if (c !== null) out[k] = c;
+    }
+    return out;
+  };
+  /** @type {Record<string, any>} */
+  const out = {};
+  for (let n = 1; n <= 6; n++) {
+    const s = stages?.[`stage${n}`] || {};
+    out[`stage${n}`] = {
+      stage: n,
+      name: s.name || null,
+      // The pipeline fills stages it never ran with PENDING; stored, that would read as unfinished.
+      status: !s.status || s.status === 'PENDING' ? 'NOT_REACHED' : s.status,
+      reason: s.reason || null,
+      outcomeStatus: s.outcomeStatus || null,
+      // Stage 5 details may hold the fraud evidence package, which repeats the message.
+      details: n === 5 && s.details && typeof s.details === 'object' ? null : clean(s.details, 'details')
+    };
+  }
+  return out;
+}

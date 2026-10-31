@@ -1909,7 +1909,8 @@ export function registerAdminRoutes(server, ctx) {
       auditRepo: ctx.auditRepo,
       merchantRepo: ctx.merchantRepo,
       server: server || ctx.server,
-      eventEmitter: ctx.eventEmitter
+      eventEmitter: ctx.eventEmitter,
+      observationRecordRepo: ctx.observationRecordRepo
     });
 
     const result = pipeline.process({
@@ -1922,7 +1923,8 @@ export function registerAdminRoutes(server, ctx) {
       isTest: true,
       testModeActive: true,
       suppressBan: Boolean(body.suppressBan),
-      merchantId
+      merchantId,
+      entryPoint: 'TEST_MODE'
     });
 
     // Record detailed audit log entry
@@ -2068,10 +2070,33 @@ export function registerAdminRoutes(server, ctx) {
     const rows = ctx.db.query(`
       SELECT id, order_id, amount_paise, status, device_id, method, created_at, expires_at
       FROM payment_sessions
-      WHERE customer_id = ?
+      WHERE customer_id = ? AND merchant_id = ?
       ORDER BY created_at DESC
       LIMIT 20
-    `, [customer.id]);
+    `, [customer.id, merchant.id]);
+
+    // The bank alerts that settled each session, or were checked against it and refused.
+    // Scoped to this merchant; a session's alerts never include another customer's settlement.
+    const records = ctx.observationRecordRepo
+      ? ctx.observationRecordRepo.findForSessions(rows.map(r => r.id)).filter(o => o.merchantId === merchant.id)
+      : [];
+    const observationsFor = sessionId => records
+      .filter(o => o.sessionId === sessionId || o.targetSessionId === sessionId)
+      .map(o => ({
+        observationId: o.observationId,
+        relation: o.sessionId === sessionId ? 'SETTLED' : 'CHECKED',
+        source: o.source,
+        entryPoint: o.entryPoint,
+        sender: o.sender,
+        senderTrustStatus: o.senderTrustStatus,
+        outcome: o.outcome,
+        processingStatus: o.processingStatus,
+        rejectionReason: o.rejectionReason,
+        amountPaise: o.amountPaise,
+        referenceLast4: o.referenceLast4,
+        receivedAt: o.receivedAt,
+        processedAt: o.processedAt
+      }));
 
     const sessions = rows.map(r => ({
       id: r.id,
@@ -2084,7 +2109,8 @@ export function registerAdminRoutes(server, ctx) {
       method: r.method,
       isProcessable: ['ACTIVE', 'PROCESSING'].includes(r.status),
       createdAt: r.created_at,
-      expiresAt: r.expires_at
+      expiresAt: r.expires_at,
+      observations: observationsFor(r.id)
     }));
 
     HttpServer.json(res, 200, {
@@ -2190,7 +2216,8 @@ export function registerAdminRoutes(server, ctx) {
       auditRepo: ctx.auditRepo,
       merchantRepo: ctx.merchantRepo,
       server,
-      eventEmitter: ctx.eventEmitter
+      eventEmitter: ctx.eventEmitter,
+      observationRecordRepo: ctx.observationRecordRepo
     });
 
     const pipelineResult = pipeline.process({
@@ -2206,7 +2233,8 @@ export function registerAdminRoutes(server, ctx) {
       suppressBan: Boolean(body.suppressBan),
       isSimulated: true,
       messageId,
-      merchantId: merchant.id
+      merchantId: merchant.id,
+      entryPoint: 'SIMULATOR'
     });
 
     // Audit Logging (Section 26 & Acceptance Test 33)
@@ -2229,7 +2257,8 @@ export function registerAdminRoutes(server, ctx) {
           simulationMessageId: messageId,
           exactRawMessage: rawContent,
           senderIdentity: pipelineResult.senderIdentity || null,
-          outcome: classifyObservationOutcome(pipelineResult),
+          observationId: pipelineResult.observationId,
+          outcome: pipelineResult.outcome || classifyObservationOutcome(pipelineResult),
           processingResult: pipelineResult.status,
           finalVerificationResult: pipelineResult.stages?.stage4?.status || 'UNKNOWN',
           securityResult: pipelineResult.stages?.stage5?.status || 'UNKNOWN',
@@ -2252,15 +2281,45 @@ export function registerAdminRoutes(server, ctx) {
     const merchant = checkSimulatorAuth(req, res);
     if (!merchant) return;
 
+    const records = ctx.observationRecordRepo ? ctx.observationRecordRepo.listForMerchant(merchant.id, { limit: 30 }) : [];
+    const recorded = new Set(records.map(r => r.observationId));
+    const fromRecords = records.map(r => ({
+      id: r.observationId,
+      observationId: r.observationId,
+      messageId: r.observationId,
+      action: r.isSimulated ? 'SIMULATED_OBSERVATION_INJECTED' : 'OBSERVATION_PROCESSED',
+      timestamp: r.processedAt,
+      entryPoint: r.entryPoint,
+      isSimulated: r.isSimulated,
+      source: r.source,
+      sender: r.sender || r.sourcePackage || '',
+      senderTrustStatus: r.senderTrustStatus,
+      bankName: r.bankName,
+      sessionId: r.sessionId || r.targetSessionId || null,
+      result: r.processingStatus,
+      outcome: r.outcome,
+      failingReason: r.rejectionReason,
+      details: {
+        observationId: r.observationId,
+        entryPoint: r.entryPoint,
+        source: r.source,
+        targetSession: r.targetSessionId,
+        processingResult: r.processingStatus,
+        outcome: r.outcome,
+        failingStage: r.failingStage,
+        failingReason: r.rejectionReason
+      }
+    }));
+
     const rows = ctx.db.query(`
       SELECT id, entity_type, entity_id, action, actor_type, details, created_at
       FROM audit_logs
-      WHERE entity_type = 'PAYMENT_SIMULATION'
+      WHERE entity_type = 'PAYMENT_SIMULATION' AND (merchant_id = ? OR merchant_id IS NULL)
       ORDER BY created_at DESC
       LIMIT 30
-    `);
+    `, [merchant.id]);
 
-    const history = rows.map(r => {
+    const legacy = rows.filter(r => !recorded.has(r.entity_id)).map(r => {
       let details = {};
       try { details = JSON.parse(r.details); } catch {}
       return {
@@ -2276,9 +2335,17 @@ export function registerAdminRoutes(server, ctx) {
         result: details.processingResult || 'UNKNOWN',
         outcome: details.outcome || null,
         failingReason: details.failingReason || null,
+        // Recorded before observation_records: there is no stored record to inspect.
+        observationId: null,
+        entryPoint: 'SIMULATOR',
+        isSimulated: true,
         details
       };
     });
+
+    const history = [...fromRecords, ...legacy]
+      .sort((a, b) => String(b.timestamp).localeCompare(String(a.timestamp)))
+      .slice(0, 30);
 
     HttpServer.json(res, 200, { history });
   });

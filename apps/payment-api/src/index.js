@@ -29,6 +29,7 @@ import {
   CustomerSessionRepository,
   PaymentSessionRepository,
   ObservationRepository,
+  ObservationRecordRepository,
   SupportTicketRepository,
   AuditLogRepository,
   DeviceRepository,
@@ -49,6 +50,7 @@ import { authGuard } from './auth-guard.js';
 import { registerPaymentRoutes } from './routes/payments.routes.js';
 import { registerCheckoutRoutes } from './routes/checkout.routes.js';
 import { registerPollerRoutes } from './routes/pollers.routes.js';
+import { registerObservationRecordRoutes } from './routes/observation-records.routes.js';
 import { registerAdminRoutes } from './routes/admin.routes.js';
 import { registerCustomerRoutes } from './routes/customer.routes.js';
 import { registerDeviceRoutes } from './routes/device.routes.js';
@@ -80,6 +82,7 @@ export function createPaymentApp(customDb = null, options = {}) {
   const customerSessionRepo = new CustomerSessionRepository(db, customerRepo);
   const sessionRepo = new PaymentSessionRepository(db);
   const obsRepo = new ObservationRepository(db);
+  const observationRecordRepo = new ObservationRecordRepository(db);
   const ticketRepo = new SupportTicketRepository(db);
   const auditRepo = new AuditLogRepository(db);
   const deviceRepo = new DeviceRepository(db);
@@ -182,6 +185,17 @@ export function createPaymentApp(customDb = null, options = {}) {
     return promoted;
   }
 
+  // The merchant dashboard's observation views (records, customer sessions, inspector) follow a
+  // session's final status, which can arrive after the alert was processed.
+  const announceSessionStatus = (session, status) => {
+    try { observationRecordRepo.updatePaymentStatus(session.id, status); } catch {}
+    server.broadcastSse('admin_counter_events', 'payment_status_changed', {
+      sessionId: session.id,
+      customerId: session.customerId || null,
+      status
+    });
+  };
+
   // When a payment succeeds, fails, expires, or cancels: dispatch webhook & promote next queued customer
   eventEmitter.on('PAYMENT.SUCCESS', (data) => {
     const session = sessionRepo.findById(data.paymentId);
@@ -192,6 +206,7 @@ export function createPaymentApp(customDb = null, options = {}) {
         verificationTag: data.verificationTag || session.verificationTag,
         sources: data.sources || session.verificationSources
       });
+      announceSessionStatus(session, PaymentStatus.SUCCESS);
       webhookEngine.dispatch('SUCCESS', session).catch(() => {});
       handleSlotFreedAndPromote(session.receivingAccountId);
     }
@@ -209,6 +224,7 @@ export function createPaymentApp(customDb = null, options = {}) {
   eventEmitter.on('PAYMENT.FAILED', (data) => {
     const session = sessionRepo.findById(data.paymentId);
     if (session) {
+      announceSessionStatus(session, PaymentStatus.FAILED);
       webhookEngine.dispatch('FAILED', session).catch(() => {});
       handleSlotFreedAndPromote(session.receivingAccountId);
     }
@@ -220,6 +236,7 @@ export function createPaymentApp(customDb = null, options = {}) {
       server.broadcastSse(session.id, 'status_change', {
         status: PaymentStatus.EXPIRED
       });
+      announceSessionStatus(session, PaymentStatus.EXPIRED);
       webhookEngine.dispatch('EXPIRED', session).catch(() => {});
       handleSlotFreedAndPromote(session.receivingAccountId);
     }
@@ -231,6 +248,7 @@ export function createPaymentApp(customDb = null, options = {}) {
       server.broadcastSse(session.id, 'status_change', {
         status: PaymentStatus.CANCELLED
       });
+      announceSessionStatus(session, PaymentStatus.CANCELLED);
       webhookEngine.dispatch('CANCELLED', session).catch(() => {});
       handleSlotFreedAndPromote(session.receivingAccountId);
     }
@@ -376,7 +394,8 @@ export function createPaymentApp(customDb = null, options = {}) {
     auditRepo,
     merchantRepo,
     server,
-    eventEmitter
+    eventEmitter,
+    observationRecordRepo
   });
 
   const context = {
@@ -388,6 +407,7 @@ export function createPaymentApp(customDb = null, options = {}) {
     sessionRepo,
     deviceRepo,
     obsRepo,
+    observationRecordRepo,
     ticketRepo,
     auditRepo,
     queueEngine,
@@ -411,6 +431,7 @@ export function createPaymentApp(customDb = null, options = {}) {
   registerPaymentRoutes(server, context);
   registerCheckoutRoutes(server, context);
   registerPollerRoutes(server, context);
+  registerObservationRecordRoutes(server, context);
   registerAdminRoutes(server, context);
   registerCustomerRoutes(server, context);
   registerDeviceRoutes(server, context);

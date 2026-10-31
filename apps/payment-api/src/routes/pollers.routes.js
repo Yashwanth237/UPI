@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { HttpServer } from '../server.js';
-import { ObservationNormalizer, BankSmsParser, BankEmailParser, generateQrSvg, describeObservationSender, classifyObservationOutcome } from '@youpi/core';
+import { ObservationNormalizer, BankSmsParser, BankEmailParser, generateQrSvg, describeObservationSender, classifyObservationOutcome, maskSmsSender, maskLongDigits } from '@youpi/core';
 import { toRupeesString, toPaise, verifyHmac, resolveRuntimeUrls, resolveSecret, safeEqual, hasBearer, getObserverToken, isAllowedNotificationPackage } from '@youpi/common';
 import { isAdminRequest } from '../auth-guard.js';
 
@@ -34,23 +34,7 @@ export const OBSERVATION_NOT_SETTLED = 'OBSERVATION_NOT_SETTLED';
 /** Audit action for every credit-like SMS a paired Android phone uploaded (Android SMS Hub). */
 export const ANDROID_SMS_EVENT = 'ANDROID_SMS_EVENT';
 
-/**
- * A sender as it may be stored or shown: bank header codes ("VM-HDFCBK") unchanged; anything that
- * is a phone number (no letters) reduced to its last 4 digits, since it identifies a person.
- * @param {unknown} sender
- */
-export function maskSmsSender(sender) {
-  if (typeof sender !== 'string' || !sender.trim()) return null;
-  const s = sender.trim().slice(0, 80);
-  if (/[a-zA-Z]/.test(s)) return s;
-  const digits = s.replace(/\D/g, '');
-  return digits.length > 4 ? `number ••••${digits.slice(-4)}` : 'number';
-}
-
-/** Removes runs of 6+ digits (phone numbers, UTRs, account numbers) from text sent to a client. */
-export function maskLongDigits(text) {
-  return typeof text === 'string' ? text.replace(/\+?\d[\d\s-]{4,}\d/g, m => (m.replace(/\D/g, '').length >= 6 ? '••••' : m)) : text;
-}
+export { maskSmsSender, maskLongDigits };
 
 /**
  * Android SMS Hub status of an uploaded SMS. ACCEPTED: verified against an open checkout.
@@ -147,13 +131,8 @@ function recordAndroidSmsEvent(ctx, { device, sender, receivingAccountId, rawTex
   try {
     const reference = String(pipeResult.reference || pipeResult.stages?.stage3?.details?.reference || pipeResult.bankReferenceNumber || bankRef || '');
     const status = androidHubStatus(pipeResult);
-    let outcome = classifyObservationOutcome(pipeResult);
-    // A messaging-app copy of an alert this account already received is a duplicate copy, not a
-    // failed payment. Display only: the copy was refused at stage 2 either way.
-    if (outcome === 'UNVERIFIED_NOTIFICATION_SENDER' && reference && receivingAccountId &&
-        ctx.db.queryOne('SELECT 1 FROM payment_observations WHERE receiving_account_id = ? AND bank_reference_number = ? LIMIT 1', [receivingAccountId, reference])) {
-      outcome = 'DUPLICATE';
-    }
+    // Computed by the pipeline: a messaging-app copy of a stored UTR is DUPLICATE, not a failure.
+    const outcome = pipeResult.outcome || classifyObservationOutcome(pipeResult);
     ctx.auditRepo.log({
       merchantId: device.merchant_id || null,
       entityType: 'ANDROID_DEVICE',
@@ -161,6 +140,7 @@ function recordAndroidSmsEvent(ctx, { device, sender, receivingAccountId, rawTex
       action: ANDROID_SMS_EVENT,
       actorType: 'OBSERVER',
       details: {
+        observationId: pipeResult.observationId || pipeResult.messageId || null,
         status,
         outcome,
         reason: status === 'ACCEPTED' ? 'VERIFIED' : (pipeResult.stages?.stage6?.outcomeStatus || pipeResult.failingCondition || 'UNRESOLVED_OBSERVATION'),
@@ -396,7 +376,8 @@ export function registerPollerRoutes(server, ctx) {
       // Test flags relax verification: honour them only for the admin credential, never for observers.
       isTest: Boolean(body.isTest) && isAdminRequest(req),
       testModeActive: Boolean(body.testModeActive) && isAdminRequest(req),
-      isSimulated: Boolean(body.isTest) && isAdminRequest(req)
+      isSimulated: Boolean(body.isTest) && isAdminRequest(req),
+      entryPoint: 'OBSERVER'
     });
     recordObservationNotSettled(ctx, {
       channel: 'POLLER_EVENTS', source: body.source, sender, receivingAccountId: body.receivingAccountId, rawText, pipeResult
@@ -417,7 +398,7 @@ export function registerPollerRoutes(server, ctx) {
     if (pipeResult.status === 'VERIFIED') {
       HttpServer.json(res, 200, {
         accepted: true,
-        observationId: pipeResult.messageId || pipeResult.stages?.stage6?.details?.observationId,
+        observationId: pipeResult.observationId,
         attribution: pipeResult.stages?.stage6?.details || pipeResult,
         pipeline: redactPipeline(pipeResult)
       });
@@ -485,7 +466,7 @@ export function registerPollerRoutes(server, ctx) {
       accepted: false,
       status: pipeResult.status || 'UNRESOLVED',
       reason: pipeResult.stages?.stage6?.outcomeStatus || pipeResult.failingCondition || 'UNRESOLVED_OBSERVATION',
-      observationId: pipeResult.messageId || pipeResult.stages?.stage6?.details?.observationId,
+      observationId: pipeResult.observationId,
       error: pipeResult.failingReason || 'Payment observation could not be verified or attributed.',
       pipeline: redactPipeline(pipeResult)
     });
@@ -792,7 +773,10 @@ export function registerPollerRoutes(server, ctx) {
       paymentSessionId: body.paymentSessionId,
       bankReferenceNumber: bankRef,
       isTest: false, // device-supplied flags must never relax verification
-      deviceInfo: device ? `${device.device_name} (${device.device_model})` : 'Android SMS Gateway'
+      deviceInfo: device ? `${device.device_name} (${device.device_model})` : 'Android SMS Gateway',
+      entryPoint: 'ANDROID',
+      deviceId: device.id,
+      merchantId: device.merchant_id
     });
     // Personal and promotional SMS (no amount, unresolved) are routine and not worth a record.
     if (amountPaise || pipeResult.status !== 'UNRESOLVED') {
@@ -822,7 +806,7 @@ export function registerPollerRoutes(server, ctx) {
       ctx.db.execute("UPDATE android_devices SET last_observation_at = datetime('now') WHERE id = ?", [deviceId]);
       HttpServer.json(res, 200, {
         accepted: true,
-        observationId: pipeResult.messageId || pipeResult.stages?.stage6?.details?.observationId,
+        observationId: pipeResult.observationId,
         attribution: pipeResult.stages?.stage6?.details || pipeResult,
         pipeline: redactAndroidPipeline(pipeResult)
       });
@@ -835,6 +819,7 @@ export function registerPollerRoutes(server, ctx) {
         accepted: false,
         status: 'REJECTED',
         reason: pipeResult.failingCondition,
+        observationId: pipeResult.observationId,
         error: maskLongDigits(pipeResult.failingReason || pipeResult.details),
         pipeline: redactAndroidPipeline(pipeResult)
       });
@@ -849,6 +834,7 @@ export function registerPollerRoutes(server, ctx) {
       HttpServer.json(res, 200, {
         accepted: true,
         status: 'PROCESSED_NON_BANK',
+        observationId: pipeResult.observationId,
         bankMatch: false,
         message: 'Raw SMS observation ingested and evaluated by server pipeline.'
       });
@@ -861,7 +847,7 @@ export function registerPollerRoutes(server, ctx) {
       accepted: false,
       status: pipeResult.status || 'UNRESOLVED',
       reason: pipeResult.stages?.stage6?.outcomeStatus || pipeResult.failingCondition || 'UNRESOLVED_OBSERVATION',
-      observationId: pipeResult.messageId || pipeResult.stages?.stage6?.details?.observationId,
+      observationId: pipeResult.observationId,
       error: maskLongDigits(pipeResult.failingReason || 'Payment observation could not be verified or attributed.'),
       pipeline: redactAndroidPipeline(pipeResult)
     });
@@ -1023,6 +1009,8 @@ export function registerPollerRoutes(server, ctx) {
       const dev = names.get(r.entity_id);
       return {
         id: r.id,
+        // The pipeline observation id (observation_records); null on rows recorded before it.
+        observationId: d.observationId || null,
         uploadedAt: r.created_at,
         receivedAt: d.receivedAt || null,
         deviceId: r.entity_id,
