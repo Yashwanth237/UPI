@@ -21,7 +21,7 @@ public class ApiClient {
     private static final String TAG = "YoupiApiClient";
     private static final String PREFS_NAME = "youpi_gateway_prefs";
     /** Reported in heartbeats so the gateway can tell which build a phone runs. */
-    static final String APP_VERSION = "1.1.1";
+    static final String APP_VERSION = "1.2.0";
     /** Why the last pairing attempt failed, for the toast (never contains the token). */
     private volatile String lastPairError = null;
 

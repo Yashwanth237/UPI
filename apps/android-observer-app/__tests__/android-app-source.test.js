@@ -5,6 +5,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { BankSmsParser } from '@youpi/core';
 import { parseLanHosts, applyLanHosts } from '../../../scripts/android-network-config.js';
+import { readAppVersion } from '../../../scripts/android-app-version.js';
 
 // Checks on the Android app's Java sources and build inputs that need no Android toolchain:
 // the on-device SMS privacy filter (run here through the same regular expressions the Java code
@@ -154,6 +155,12 @@ describe('Android app sources', () => {
   test('re-pairing sends a proof for the previous registration instead of leaving it active', () => {
     const client = javaSource('ApiClient.java');
     assert.match(client, /body\.put\("previousProof", calculateHmacSha256\("replace:" \+ oldDeviceId \+ ":" \+ enrollmentToken, oldKey\)\)/);
+  });
+
+  test('Gradle, the manifest and the app\'s reported version agree, so no build downgrades the installed app', () => {
+    const version = readAppVersion(path.join(APP_DIR, 'AndroidManifest.xml'), path.resolve(APP_DIR, '../../build.gradle.kts'));
+    assert.ok(version.versionCode >= 4, `versionCode ${version.versionCode} is below the 3 already installed on phones`);
+    assert.equal(/APP_VERSION = "([^"]+)"/.exec(javaSource('ApiClient.java'))[1], version.versionName);
   });
 
   test('asks for RECEIVE_SMS only, never the whole inbox', () => {

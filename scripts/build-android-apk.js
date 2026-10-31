@@ -1,10 +1,11 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
-import { execSync } from 'node:child_process';
+import { execSync, spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { syncAndroidAllowlist } from './sync-android-allowlist.js';
 import { parseLanHosts, applyLanHosts } from './android-network-config.js';
+import { readAppVersion } from './android-app-version.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -107,6 +108,15 @@ const winWrap = (bin, args) => `cmd.exe /c ""${bin}" ${args}"`;
 const runD8 = args => (D8_CMD ? `${D8_CMD} ${args}` : winWrap(D8, args));
 const runApksigner = args => (APKSIGNER_CMD ? `${APKSIGNER_CMD} ${args}` : winWrap(APKSIGNER, args));
 
+/** versionCode an APK declares, read with aapt; null when it cannot be read. */
+function apkVersionCode(apkPath) {
+  // aapt exits non-zero here (it cannot resolve the framework icon reference) but still prints the
+  // package line, so read stdout whatever the exit code.
+  const out = spawnSync(AAPT, ['dump', 'badging', apkPath], { encoding: 'utf8' }).stdout || '';
+  const m = /versionCode='(\d+)'/.exec(out);
+  return m ? Number(m[1]) : null;
+}
+
 console.log(`ℹ️  Toolchain:
    Android SDK: ${ANDROID_SDK}
    Build Tools: ${CLT_BUILD_TOOLS}
@@ -119,6 +129,18 @@ console.log(`ℹ️  Toolchain:
 
 const APP_DIR = path.resolve(REPO_ROOT, 'apps/android-observer-app/app');
 const MANIFEST = path.resolve(APP_DIR, 'src/main/AndroidManifest.xml');
+
+// Version: AndroidManifest.xml (what this script packages) and app/build.gradle.kts (what an
+// Android Studio/Gradle build packages) must agree. They had drifted (3 vs 1), so a Gradle-built
+// APK failed with INSTALL_FAILED_VERSION_DOWNGRADE on a phone running this script's build.
+const APP_VERSION = readAppVersion(MANIFEST, path.resolve(APP_DIR, 'build.gradle.kts'));
+// An installed build with a higher versionCode refuses the update, so never ship a lower one.
+const PREVIOUS_APK = path.resolve(REPO_ROOT, 'apps/android-observer-app/youpi-sms-gateway.apk');
+const previousVersionCode = fs.existsSync(PREVIOUS_APK) ? apkVersionCode(PREVIOUS_APK) : null;
+if (previousVersionCode !== null && APP_VERSION.versionCode < previousVersionCode) {
+  throw new Error(`❌ versionCode ${APP_VERSION.versionCode} is lower than the last built APK (${previousVersionCode}). Raise versionCode in AndroidManifest.xml and app/build.gradle.kts.`);
+}
+console.log(`ℹ️  App version ${APP_VERSION.versionName} (versionCode ${APP_VERSION.versionCode}; previous build ${previousVersionCode ?? 'none'})`);
 const RES_DIR = path.resolve(APP_DIR, 'src/main/res');
 const JAVA_DIR = path.resolve(APP_DIR, 'src/main/java/com/youpi/observer');
 
@@ -236,6 +258,10 @@ try {
   }
 
   const signedApk = path.join(WORK_DIR, 'signed.apk');
+  const builtVersionCode = apkVersionCode(alignedApk);
+  if (builtVersionCode !== APP_VERSION.versionCode) {
+    throw new Error(`❌ Built APK has versionCode ${builtVersionCode}, expected ${APP_VERSION.versionCode}.`);
+  }
   execSync(runApksigner(`sign --ks "${keystorePath}" --ks-pass pass:${ksPass} --key-pass pass:${ksPass} --ks-key-alias "${alias}" --out "${signedApk}" "${alignedApk}"`), { stdio: 'inherit' });
 
   // Verify APK signature
