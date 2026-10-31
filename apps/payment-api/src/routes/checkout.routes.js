@@ -1669,6 +1669,19 @@ export function registerCheckoutRoutes(server, ctx) {
       return;
     }
 
+    // Same rule as the admin simulators: synthetic bank messages only while Test Mode is on,
+    // so a dev-mode stack taking real payments cannot have a session settled by a typed message.
+    const testModeUntil = ctx.merchantRepo.findById(session.merchantId)?.branding?.testModeUntil;
+    if (!(testModeUntil && Number(testModeUntil) > Date.now())) {
+      HttpServer.json(res, 403, {
+        success: false,
+        error: 'Developer Test Mode is inactive or has expired. Simulated observations are blocked.',
+        code: 'TEST_MODE_INACTIVE',
+        testModeActive: false
+      });
+      return;
+    }
+
     const body = await HttpServer.parseBody(req);
     const source = (body.source || 'SMS').toUpperCase();
     const rawText = (body.rawText || body.message || body.text || '').toString();

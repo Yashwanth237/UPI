@@ -21,6 +21,12 @@ describe('YOUPI PG: Parser Rule Correction & Exact Fraud/Ban System (All 29 Acce
   const merchantId = '00000000-0000-0000-0000-000000000001';
   const receivingAccountId = '00000000-0000-0000-0000-000000000002';
 
+  /** Opens a short Test Mode window, which the checkout simulator requires. */
+  function enableTestModeWindow() {
+    const merchant = merchantRepo.findById(merchantId);
+    merchantRepo.update(merchantId, { branding: { ...merchant.branding, testModeUntil: Date.now() + 60000 } });
+  }
+
   before(async () => {
     testDb = new Database({ inMemory: true });
     customerRepo = new CustomerRepository(testDb);
@@ -752,6 +758,9 @@ describe('YOUPI PG: Parser Rule Correction & Exact Fraud/Ban System (All 29 Acce
     assert.equal(sessionRepo.findById(session.id).status, PaymentStatus.ACTIVE);
     assert.equal(customerRepo.findById(cust.id).status, 'ACTIVE');
 
+    // The simulator only accepts messages while Test Mode is on.
+    enableTestModeWindow();
+
     // User pushes fake SMS matching their registered mobile
     const pushRes = await request(`/api/v1/checkout/${session.id}/simulate-observation`, {
       method: 'POST',
@@ -797,6 +806,8 @@ describe('YOUPI PG: Parser Rule Correction & Exact Fraud/Ban System (All 29 Acce
       mobileNumber: '+919876543231'
     });
     const session = createActiveSession('ORD-REALTIME-31', 99900n, cust.id);
+
+    enableTestModeWindow();
 
     // User pushes fake email matching their registered email
     const pushRes = await request(`/api/v1/checkout/${session.id}/simulate-observation`, {

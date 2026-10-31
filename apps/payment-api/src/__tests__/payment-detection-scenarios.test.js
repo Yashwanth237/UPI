@@ -273,6 +273,18 @@ describe('Payment detection scenarios (create → observe → settle)', () => {
     assert.equal(statusOf(id), PaymentStatus.EXPIRED);
   });
 
+  test('with Test Mode off the checkout simulator refuses a FAKEBNK message and the order stays unpaid', async () => {
+    const id = await createActivePayment('DET-SIM-OFF', '167.00');
+    const res = await call(`/api/v1/checkout/${id}/simulate-observation`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${TEST_ADMIN_TOKEN}` },
+      body: { source: 'SMS', sender: 'FAKEBNK', rawText: creditSms('167.00', nextUtr()) }
+    });
+    assert.equal(res.status, 403);
+    assert.equal(res.body.code, 'TEST_MODE_INACTIVE');
+    assert.equal(statusOf(id), PaymentStatus.ACTIVE);
+  });
+
   test('unknown payment ids return 404', async () => {
     const missing = '11111111-2222-3333-4444-555555555555';
     assert.equal((await call(`/api/v1/payments/${missing}`)).status, 404);

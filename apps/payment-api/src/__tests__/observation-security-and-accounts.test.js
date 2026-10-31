@@ -344,6 +344,9 @@ describe('Observation security and receiving accounts', () => {
       assert.equal(JSON.parse(success[0].body).livemode, true, 'a real observer alert is live');
 
       // An operator-typed message through the developer simulator is flagged as not live.
+      // The simulator only accepts messages while Test Mode is on.
+      const brandingBefore = merchantRepo.findById(MERCHANT).branding;
+      merchantRepo.update(MERCHANT, { branding: { ...brandingBefore, testModeUntil: Date.now() + 60000 } });
       const sim = await pay('HOOK-SIM', '301.00');
       const simRes = await call(`/api/v1/checkout/${sim.paymentId}/simulate-observation`, {
         method: 'POST', headers: admin, body: { source: 'SMS', sender: 'VM-HDFCBK', rawText: creditSms('301.00', nextUtr()) }
