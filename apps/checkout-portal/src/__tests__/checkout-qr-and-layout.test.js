@@ -92,7 +92,7 @@ describe('Checkout QR rendering, app icons and payment-panel layout', () => {
   }
 
   const activeUri = buildUpiUri({
-    payeeVpa: '6304678117@ybl',
+    payeeVpa: 'merchant@ybl',
     payeeName: 'YOUPI Demo Store',
     amountPaise: toPaise('1.00'),
     transactionRef: 'ORDER-QR-1'
@@ -102,7 +102,7 @@ describe('Checkout QR rendering, app icons and payment-panel layout', () => {
     test('carries the receiving VPA, payee name, exact amount and order reference', () => {
       const params = new URL(activeUri.replace('upi://', 'http://x/')).searchParams;
       assert.ok(activeUri.startsWith('upi://pay?'));
-      assert.equal(params.get('pa'), '6304678117@ybl');
+      assert.equal(params.get('pa'), 'merchant@ybl');
       assert.equal(params.get('pn'), 'YOUPI Demo Store');
       assert.equal(params.get('am'), '1.00');
       assert.equal(params.get('tn'), 'ORDER-QR-1');
