@@ -36,10 +36,12 @@ function seedDefaultMerchant(merchantRepo) {
  * Numbered schema migrations. Append only; never renumber or remove an entry.
  * 1: everything up to and including the 10 original table groups (pre-ledger installs).
  * 2: staff identity (staff_users, staff_sessions) and the ledger itself.
+ * 3: observation_records (one processed bank alert per row, keyed by the pipeline observation id).
  */
 export const SCHEMA_MIGRATIONS = Object.freeze([
   [1, 'baseline_payment_gateway'],
-  [2, 'staff_identity_and_sessions']
+  [2, 'staff_identity_and_sessions'],
+  [3, 'observation_records']
 ]);
 
 /**

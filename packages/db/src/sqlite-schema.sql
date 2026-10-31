@@ -314,3 +314,42 @@ CREATE TABLE IF NOT EXISTS staff_sessions (
 );
 
 CREATE INDEX IF NOT EXISTS idx_staff_sessions_user ON staff_sessions (staff_user_id);
+
+-- 14. Observation records: one row per bank alert the verification pipeline processed (Android
+-- SMS / notification, Gmail, simulators), keyed by the pipeline's observation id. Never the
+-- message text: the evidence stays in payment_observations.raw_payload (payment_observation_id).
+-- session_id / customer_id are set only when the alert settled that checkout; target_session_id
+-- is the checkout it was checked against.
+CREATE TABLE IF NOT EXISTS observation_records (
+    id TEXT PRIMARY KEY,
+    merchant_id TEXT REFERENCES merchants(id) ON DELETE CASCADE,
+    device_id TEXT,
+    entry_point TEXT NOT NULL,
+    source TEXT NOT NULL,
+    sender TEXT,
+    source_package TEXT,
+    bank_name TEXT,
+    sender_trust_status TEXT NOT NULL DEFAULT 'UNKNOWN',
+    is_simulated INTEGER NOT NULL DEFAULT 0,
+    received_at TEXT,
+    processed_at TEXT NOT NULL,
+    processing_status TEXT NOT NULL,
+    outcome TEXT NOT NULL,
+    rejection_reason TEXT,
+    failing_stage INTEGER,
+    stages TEXT NOT NULL DEFAULT '{}',
+    amount_paise INTEGER,
+    reference_last4 TEXT,
+    payment_observation_id TEXT,
+    target_session_id TEXT,
+    session_id TEXT,
+    order_id TEXT,
+    customer_id TEXT,
+    payment_status TEXT,
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_observation_records_merchant ON observation_records (merchant_id, processed_at);
+CREATE INDEX IF NOT EXISTS idx_observation_records_session ON observation_records (session_id);
+CREATE INDEX IF NOT EXISTS idx_observation_records_target_session ON observation_records (target_session_id);
+CREATE INDEX IF NOT EXISTS idx_observation_records_customer ON observation_records (customer_id);
