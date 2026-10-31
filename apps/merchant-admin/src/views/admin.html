@@ -2166,7 +2166,7 @@
             <div>
               <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:0.75rem;">
                 <strong style="color:#ffffff; font-size:0.95rem; display:flex; align-items:center; gap:0.5rem;">
-                  <span>💳</span> Active Payment Sessions
+                  <span>💳</span> Payment Sessions &amp; Bank Alerts
                 </strong>
                 <button class="btn btn-secondary" onclick="simReloadSessions()"
                   style="font-size:0.72rem; padding:0.25rem 0.6rem;">
@@ -2174,7 +2174,7 @@
                 </button>
               </div>
               <div id="simSessionsList"
-                style="min-height:160px; max-height:220px; overflow-y:auto; background:#020617; border:1px solid #334155; border-radius:6px; padding:0.5rem;">
+                style="min-height:160px; max-height:340px; overflow-y:auto; background:#020617; border:1px solid #334155; border-radius:6px; padding:0.5rem;">
                 <div style="color:#64748b; font-size:0.82rem; text-align:center; padding:2rem 1rem;">
                   Please select a customer on the left to inspect their active payment sessions.
                 </div>
@@ -2320,44 +2320,72 @@
 
         </div>
 
-        <!-- PROCESSING RESULT INSPECTOR (Section 21 & 22) -->
+        <!-- PROCESSING RESULT INSPECTOR (Section 21 & 22): one stored observation, by its id -->
         <div id="simResultInspectorCard" class="card"
-          style="display:none; border:1px solid #334155; background:#020617; margin-bottom:1.5rem;">
+          style="border:1px solid #334155; background:#020617; margin-bottom:1.5rem;">
           <div
             style="display:flex; justify-content:space-between; align-items:center; margin-bottom:1rem; flex-wrap:wrap; gap:0.5rem; border-bottom:1px solid #1e293b; padding-bottom:0.75rem;">
             <div style="display:flex; align-items:center; gap:0.75rem;">
               <span style="font-size:1.3rem;">🔬</span>
               <h3 style="margin:0; font-size:1.15rem; color:#ffffff; font-weight:800;">Processing Result Inspector</h3>
               <span id="simResultStatusBadge" class="badge"
-                style="font-size:0.82rem; padding:0.3rem 0.75rem;">UNKNOWN</span>
+                style="display:none; font-size:0.82rem; padding:0.3rem 0.75rem;"></span>
             </div>
             <div id="simResultMessageId" style="font-size:0.78rem; color:#94a3b8; font-family:monospace;"></div>
           </div>
 
+          <div id="simResultEmpty" style="padding:1.25rem; text-align:center; color:#64748b; font-size:0.86rem;">
+            Select an observation to inspect. Click a row in Incoming Bank Credit Alerts, Simulation History or a
+            customer's session.
+          </div>
+
+          <div id="simResultBody" style="display:none;">
           <!-- Target & Extracted Fields Grid -->
           <div
             style="display:grid; grid-template-columns:repeat(auto-fit, minmax(160px, 1fr)); gap:0.75rem; margin-bottom:1.25rem;">
             <div style="background:#0f172a; padding:0.65rem 0.85rem; border-radius:6px; border:1px solid #1e293b;">
+              <div style="font-size:0.7rem; color:#64748b; text-transform:uppercase;">Outcome</div>
+              <div id="simResOutcome" style="font-weight:700; color:#f8fafc; font-size:0.82rem; word-break:break-all;">-</div>
+            </div>
+            <div style="background:#0f172a; padding:0.65rem 0.85rem; border-radius:6px; border:1px solid #1e293b;">
               <div style="font-size:0.7rem; color:#64748b; text-transform:uppercase;">Target Session</div>
-              <div id="simResTargetSession"
-                style="font-weight:700; color:#f8fafc; font-size:0.85rem; font-family:monospace;">None</div>
+              <div id="simResTargetSession" style="font-weight:700; color:#f8fafc; font-size:0.85rem; font-family:monospace; word-break:break-all;">-</div>
+            </div>
+            <div style="background:#0f172a; padding:0.65rem 0.85rem; border-radius:6px; border:1px solid #1e293b;">
+              <div style="font-size:0.7rem; color:#64748b; text-transform:uppercase;">Customer</div>
+              <div id="simResCustomer" style="font-weight:700; color:#f8fafc; font-size:0.82rem; word-break:break-all;">-</div>
             </div>
             <div style="background:#0f172a; padding:0.65rem 0.85rem; border-radius:6px; border:1px solid #1e293b;">
               <div style="font-size:0.7rem; color:#64748b; text-transform:uppercase;">Source</div>
-              <div id="simResSource" style="font-weight:700; color:#f8fafc; font-size:0.85rem;">-</div>
+              <div id="simResSource" style="font-weight:700; color:#f8fafc; font-size:0.85rem; word-break:break-all;">-</div>
+            </div>
+            <div style="background:#0f172a; padding:0.65rem 0.85rem; border-radius:6px; border:1px solid #1e293b;">
+              <div style="font-size:0.7rem; color:#64748b; text-transform:uppercase;">Sender</div>
+              <div id="simResSender" style="font-weight:700; color:#f8fafc; font-size:0.82rem; font-family:monospace; word-break:break-all;">-</div>
+            </div>
+            <div style="background:#0f172a; padding:0.65rem 0.85rem; border-radius:6px; border:1px solid #1e293b;">
+              <div style="font-size:0.7rem; color:#64748b; text-transform:uppercase;">Sender Trust / Bank</div>
+              <div id="simResTrust" style="font-weight:700; color:#f8fafc; font-size:0.82rem; word-break:break-all;">-</div>
             </div>
             <div style="background:#0f172a; padding:0.65rem 0.85rem; border-radius:6px; border:1px solid #1e293b;">
               <div style="font-size:0.7rem; color:#64748b; text-transform:uppercase;">Amount</div>
-              <div id="simResAmount" style="font-weight:700; color:#38bdf8; font-size:0.95rem;">-</div>
+              <div id="simResAmount" style="font-weight:700; color:#38bdf8; font-size:0.95rem; word-break:break-all;">-</div>
             </div>
             <div style="background:#0f172a; padding:0.65rem 0.85rem; border-radius:6px; border:1px solid #1e293b;">
               <div style="font-size:0.7rem; color:#64748b; text-transform:uppercase;">Reference / UTR</div>
-              <div id="simResRef" style="font-weight:700; color:#f8fafc; font-size:0.82rem; font-family:monospace;">-
-              </div>
+              <div id="simResRef" style="font-weight:700; color:#f8fafc; font-size:0.82rem; font-family:monospace; word-break:break-all;">-</div>
             </div>
             <div style="background:#0f172a; padding:0.65rem 0.85rem; border-radius:6px; border:1px solid #1e293b;">
-              <div style="font-size:0.7rem; color:#64748b; text-transform:uppercase;">Failing Reason</div>
-              <div id="simResReason" style="font-weight:700; color:#f87171; font-size:0.82rem;">None</div>
+              <div style="font-size:0.7rem; color:#64748b; text-transform:uppercase;">Rejection Reason</div>
+              <div id="simResReason" style="font-weight:700; color:#f87171; font-size:0.82rem; word-break:break-all;">-</div>
+            </div>
+            <div style="background:#0f172a; padding:0.65rem 0.85rem; border-radius:6px; border:1px solid #1e293b;">
+              <div style="font-size:0.7rem; color:#64748b; text-transform:uppercase;">Received</div>
+              <div id="simResReceivedAt" style="font-weight:600; color:#cbd5e1; font-size:0.78rem; word-break:break-all;">-</div>
+            </div>
+            <div style="background:#0f172a; padding:0.65rem 0.85rem; border-radius:6px; border:1px solid #1e293b;">
+              <div style="font-size:0.7rem; color:#64748b; text-transform:uppercase;">Processed</div>
+              <div id="simResProcessedAt" style="font-weight:600; color:#cbd5e1; font-size:0.78rem; word-break:break-all;">-</div>
             </div>
           </div>
 
@@ -2370,12 +2398,12 @@
             <!-- Injected via JavaScript -->
           </div>
 
-          <!-- Raw Text Verbatim -->
+          <!-- Evidence -->
           <div style="background:#0f172a; padding:0.75rem 1rem; border-radius:6px; border:1px solid #1e293b;">
-            <div style="font-size:0.72rem; color:#64748b; text-transform:uppercase; margin-bottom:0.25rem;">Exact Raw
-              Payload (Preserved)</div>
+            <div style="font-size:0.72rem; color:#64748b; text-transform:uppercase; margin-bottom:0.25rem;">Evidence</div>
             <pre id="simResRawText"
               style="margin:0; font-size:0.8rem; color:#cbd5e1; font-family:monospace; white-space:pre-wrap; word-break:break-all;"></pre>
+          </div>
           </div>
         </div>
 
@@ -2400,7 +2428,7 @@
                   <th style="padding:0.6rem 0.75rem;">Sender</th>
                   <th style="padding:0.6rem 0.75rem;">Session</th>
                   <th style="padding:0.6rem 0.75rem;">Result</th>
-                  <th style="padding:0.6rem 0.75rem;">Message ID</th>
+                  <th style="padding:0.6rem 0.75rem;">Observation ID</th>
                   <th style="padding:0.6rem 0.75rem;">Reason</th>
                 </tr>
               </thead>
@@ -2586,7 +2614,7 @@
                 <div style="display:flex; align-items:center; gap:0.75rem;">
                   <h4 style="margin:0; font-size:1rem; color:#ffffff;">🔬 Complete Processing Result</h4>
                   <span id="testResultStatusBadge" class="badge"
-                    style="font-size:0.8rem; padding:0.3rem 0.75rem;">UNKNOWN</span>
+                    style="font-size:0.8rem; padding:0.3rem 0.75rem;"></span>
                 </div>
                 <div id="testResultMeta" style="font-size:0.8rem; color:#94a3b8; font-family:monospace;"></div>
               </div>
@@ -5470,8 +5498,11 @@
           const outcome = m.outcome || (m.status === 'NEEDS_REVIEW' ? 'PENDING_REVIEW' : m.status);
           const trust = m.senderTrustStatus || 'UNKNOWN';
           const checkout = m.orderId ? `<br>order ${escapeHtml(String(m.orderId))}` : (m.sessionId ? `<br>session ${escapeHtml(String(m.sessionId).slice(0, 8))}` : '');
+          const open = m.observationId
+            ? ` onclick="openObservationInspector(${jsArg(m.observationId)})" title="Open in Processing Result Inspector" style="cursor:pointer;"`
+            : ' title="Uploaded before stored results; nothing to inspect"';
           return `
-        <tr>
+        <tr${open}>
           <td><span style="font-size:0.75rem;">${escapeHtml(when ? new Date(when).toLocaleString() : '-')}</span></td>
           <td><span style="font-size:0.75rem;">${escapeHtml(m.deviceName || (m.deviceId || '').slice(0, 8))}${m.deviceActive ? '' : ' (inactive)'}</span></td>
           <td><span style="font-size:0.75rem;">${escapeHtml(m.source || 'SMS')}</span>${m.sourcePackage ? `<br><code style="font-size:0.65rem; color:var(--text-muted);" title="Android app that posted the notification">via ${escapeHtml(m.sourcePackage)}</code>` : ''}</td>
@@ -6072,6 +6103,17 @@
           },
           () => { /* the caller reconnects */ }
         );
+        adminSse.addEventListener('observation_processed', (e) => {
+          let payload = null;
+          try { payload = e.data ? JSON.parse(e.data) : null; } catch (err) { }
+          onObservationProcessed(payload);
+        });
+        // A session settled or ended after its alert was processed (e.g. SMS-only grace period).
+        adminSse.addEventListener('payment_status_changed', (e) => {
+          let p = null;
+          try { p = e.data ? JSON.parse(e.data) : null; } catch (err) { }
+          if (p) onObservationProcessed({ sessionId: p.sessionId, customerId: p.customerId, statusOnly: true });
+        });
         adminSse.addEventListener('status_change', () => {
           pollGlobalCounterPending();
           fetchLiveData();
@@ -6585,7 +6627,7 @@
       if (amountElem) amountElem.textContent = res.amount || 'None';
       if (refElem) refElem.textContent = res.reference || 'None';
       if (reasonElem) {
-        reasonElem.textContent = res.reason || 'None (Passed)';
+        reasonElem.textContent = res.reason || (res.status === 'VERIFIED' ? 'Not rejected (verified)' : '—');
         reasonElem.style.color = res.reason ? '#f87171' : '#4ade80';
       }
 
@@ -6600,7 +6642,7 @@
         ];
 
         stagesList.innerHTML = stageDefs.map(def => {
-          const st = res.stages[def.key] || { status: 'UNKNOWN' };
+          const st = res.stages[def.key] || { status: 'NOT_REACHED' };
           let statusColor = '#94a3b8';
           let statusBadge = 'PENDING';
           let bg = 'rgba(15,23,42,0.6)';
@@ -6819,10 +6861,12 @@
       await simReloadSessions();
     }
 
-    async function simReloadSessions() {
+    /** `keepSelection`: a live refresh; keep the picked session and do not flash a loading state. */
+    async function simReloadSessions({ keepSelection = false } = {}) {
       if (!simSelectedCustomer) return;
       const container = document.getElementById('simSessionsList');
-      if (container) {
+      const keepId = keepSelection && simSelectedSession ? simSelectedSession.id : null;
+      if (container && !keepSelection) {
         container.innerHTML = '<div style="padding:1.5rem; text-align:center; color:#94a3b8;">Loading payment sessions...</div>';
       }
 
@@ -6881,23 +6925,43 @@
               </div>
             </div>
           </div>
+          ${simSessionObservationsHtml(s)}
         `;
         }).join('');
 
         // Store sessions
         container._sessions = sessions;
 
-        // Auto-select the first processable session if available, else first session
-        const firstActive = sessions.find(s => s.isProcessable) || sessions[0];
+        // Keep the picked session on a live refresh; otherwise the first processable one
+        const firstActive = (keepId && sessions.find(s => s.id === keepId)) || sessions.find(s => s.isProcessable) || sessions[0];
         if (firstActive) {
-          simPickSession(firstActive.id);
+          simPickSession(firstActive.id, { refill: !keepSelection });
         }
       } catch (e) {
         if (container) container.innerHTML = `<div style="padding:1rem; color:#ef4444; font-size:0.8rem;">Error: ${escapeHtml(e.message)}</div>`;
       }
     }
 
-    function simPickSession(sessionId) {
+    /** A session's bank alerts: SETTLED it, or CHECKED against it and refused. Click to inspect. */
+    function simSessionObservationsHtml(session) {
+      const list = session.observations || [];
+      if (!list.length) {
+        return `<div style="font-size:0.7rem; color:#475569; margin:-0.2rem 0 0.45rem 1.6rem;">No bank alert recorded for this session.</div>`;
+      }
+      return `<div style="margin:-0.2rem 0 0.5rem 1.6rem; display:flex; flex-direction:column; gap:0.2rem;">${list.map(o => {
+        const [bg, fg] = OBS_OUTCOME_COLORS[o.outcome] || ['#64748b', '#ffffff'];
+        const label = o.relation === 'SETTLED' ? 'settled' : 'checked';
+        return `<div onclick="event.stopPropagation(); inspectObservation(${jsArg(o.observationId)})" title="Open in Processing Result Inspector"
+          style="cursor:pointer; font-size:0.7rem; color:#cbd5e1; display:flex; gap:0.4rem; align-items:center; flex-wrap:wrap;">
+          <span class="badge" style="font-size:0.62rem; padding:0.1rem 0.35rem; background:${bg}; color:${fg};">${escapeHtml(o.outcome.replace(/_/g, ' '))}</span>
+          <span>${escapeHtml(label)} · ${escapeHtml(o.source)}${o.sender ? ' ' + escapeHtml(o.sender) : ''} · ${escapeHtml(obsAmountText(o.amountPaise))}${o.referenceLast4 ? ' · ref …' + escapeHtml(o.referenceLast4) : ''}</span>
+          <code style="color:#64748b;">${escapeHtml(o.observationId.slice(0, 14))}…</code>
+        </div>`;
+      }).join('')}</div>`;
+    }
+
+    /** `refill: false` (a live refresh) leaves the message fields as the operator typed them. */
+    function simPickSession(sessionId, { refill = true } = {}) {
       const container = document.getElementById('simSessionsList');
       const sessions = container?._sessions || [];
       const sess = sessions.find(s => s.id === sessionId);
@@ -6951,6 +7015,7 @@
         if (btnGmail) { btnGmail.disabled = false; btnGmail.style.opacity = '1'; btnGmail.style.cursor = 'pointer'; }
 
         // Fill in sample amounts matching session
+        if (!refill) return;
         const randRef = Math.floor(100000000000 + Math.random() * 900000000000);
         const smsContent = document.getElementById('simSmsContent');
         if (smsContent && (!smsContent.value || smsContent.value.includes('credited with'))) {
@@ -7029,8 +7094,13 @@
           showAdminToast(`Observation Processed: ${data.status}`);
         }
 
-        // Display results in Result Inspector
-        simRenderResultInspector(data, stream);
+        // Show the stored record of this run (same id as history and the hub); a request the
+        // simulator refused before the pipeline ran has no record, only its error.
+        if (data.observationId) {
+          await inspectObservation(data.observationId);
+        } else {
+          simShowInspectorMessage(`Not processed: ${data.message || data.error || 'the simulator refused this request.'}`);
+        }
 
         // Refresh customer sessions & history
         if (simSelectedCustomer) {
@@ -7047,119 +7117,174 @@
       }
     }
 
-    function simRenderResultInspector(data, stream) {
-      const card = document.getElementById('simResultInspectorCard');
-      if (!card) return;
-      card.style.display = 'block';
-      card.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    // =========================================================================
+    // PROCESSING RESULT INSPECTOR: renders one stored observation record
+    // (GET /api/v1/admin/observations/:id). Never a placeholder status.
+    // =========================================================================
+    let inspectedObservationId = null;
 
-      // Status Badge
+    const OBS_OUTCOME_COLORS = {
+      ACCEPTED: ['#22c55e', '#0f172a'], REJECTED: ['#ef4444', '#ffffff'], INVALID_BANK_SENDER: ['#ef4444', '#ffffff'],
+      DUPLICATE: ['#38bdf8', '#0f172a'], NO_MATCHING_CHECKOUT: ['#f59e0b', '#0f172a'], PENDING_REVIEW: ['#f59e0b', '#0f172a'],
+      UNVERIFIED_NOTIFICATION_SENDER: ['#64748b', '#ffffff'], INCOMPLETE_NOTIFICATION: ['#64748b', '#ffffff']
+    };
+    const OBS_ENTRY_LABELS = { ANDROID: 'Android phone', OBSERVER: 'Observer', SIMULATOR: 'Simulator', TEST_MODE: 'Test Mode', CHECKOUT_SIMULATOR: 'Checkout simulator' };
+
+    function obsAmountText(paise) {
+      return paise ? `₹${(Number(paise) / 100).toFixed(2)}` : '—';
+    }
+
+    /** Shows a message instead of a record (empty state or an error). */
+    function simShowInspectorMessage(text) {
+      const empty = document.getElementById('simResultEmpty');
+      const body = document.getElementById('simResultBody');
       const badge = document.getElementById('simResultStatusBadge');
-      if (badge) {
-        badge.textContent = data.status || 'UNKNOWN';
-        if (data.status === 'VERIFIED') {
-          badge.style.background = '#22c55e';
-          badge.style.color = '#0f172a';
-        } else if (data.status === 'REJECTED') {
-          badge.style.background = '#ef4444';
-          badge.style.color = '#ffffff';
-        } else if (data.status === 'SUSPICIOUS') {
-          badge.style.background = '#f59e0b';
-          badge.style.color = '#0f172a';
-        } else {
-          badge.style.background = '#64748b';
-          badge.style.color = '#ffffff';
+      const idEl = document.getElementById('simResultMessageId');
+      if (empty) { empty.textContent = text; empty.style.display = 'block'; }
+      if (body) body.style.display = 'none';
+      if (badge) badge.style.display = 'none';
+      if (idEl) idEl.textContent = '';
+    }
+
+    /** Loads and shows one observation. `scroll`: bring the inspector into view. */
+    async function inspectObservation(observationId, { scroll = true } = {}) {
+      if (!observationId) return;
+      inspectedObservationId = observationId;
+      try {
+        const headers = await simGetHeaders();
+        const res = await fetch(`${API_BASE}/api/v1/admin/observations/${encodeURIComponent(observationId)}`, { headers });
+        if (inspectedObservationId !== observationId) return; // a newer selection won
+        if (!res.ok) {
+          simShowInspectorMessage(res.status === 404
+            ? `Observation ${observationId} is not stored for this merchant.`
+            : `Could not load observation ${observationId} (HTTP ${res.status}).`);
+          return;
         }
+        simRenderObservationRecord(await res.json());
+        if (scroll) document.getElementById('simResultInspectorCard')?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+      } catch (e) {
+        simShowInspectorMessage('Could not load the observation: ' + e.message);
       }
+    }
 
-      const msgIdEl = document.getElementById('simResultMessageId');
-      if (msgIdEl) msgIdEl.textContent = `ID: ${data.messageId || '-'}`;
+    /** From the Android SMS Hub: open the simulator view, where the inspector lives, on this record. */
+    function openObservationInspector(observationId) {
+      if (!observationId) return;
+      switchSubView('developerHub', 'subViewDevSimulator');
+      inspectObservation(observationId);
+    }
 
-      const tgtEl = document.getElementById('simResTargetSession');
-      if (tgtEl) {
-        tgtEl.textContent = (simSelectedSession ? `${simSelectedSession.id.slice(0, 10)}... (#${simSelectedSession.orderId})` : 'Auto-Resolved');
-      }
+    function simRenderObservationRecord(data) {
+      const o = data.observation;
+      const set = (id, text) => { const el = document.getElementById(id); if (el) el.textContent = text; return el; };
+      document.getElementById('simResultEmpty').style.display = 'none';
+      document.getElementById('simResultBody').style.display = 'block';
 
-      const srcEl = document.getElementById('simResSource');
-      if (srcEl) srcEl.textContent = stream;
+      const badge = document.getElementById('simResultStatusBadge');
+      const [bg, fg] = OBS_OUTCOME_COLORS[o.outcome] || ['#64748b', '#ffffff'];
+      badge.style.display = 'inline-block';
+      badge.textContent = `${o.outcome.replace(/_/g, ' ')} · ${o.processingStatus}`;
+      badge.style.background = bg;
+      badge.style.color = fg;
+      set('simResultMessageId', `ID: ${o.observationId}`);
 
-      const amtEl = document.getElementById('simResAmount');
-      if (amtEl) amtEl.textContent = data.amount || '-';
+      set('simResOutcome', o.outcome.replace(/_/g, ' '));
+      const s = data.session;
+      document.getElementById('simResultInspectorCard')._sessionId = s ? s.id : null;
+      set('simResTargetSession', s
+        ? `${s.id.slice(0, 10)}… #${s.orderId} · ${s.status}${s.settledByThisObservation ? ' · settled by this alert' : ' · checked, not settled'}`
+        : 'No checkout matched');
+      set('simResCustomer', data.customer ? `${data.customer.name || 'Customer'} (${data.customer.id.slice(0, 8)})` : (s ? 'Not credited to a customer' : '—'));
+      set('simResSource', `${o.source}${o.sourcePackage ? ' via ' + o.sourcePackage : ''} · ${OBS_ENTRY_LABELS[o.entryPoint] || o.entryPoint}${o.deviceName ? ' (' + o.deviceName + ')' : ''}`);
+      set('simResSender', o.sender || 'None (no sender address)');
+      set('simResTrust', `${o.senderTrustStatus}${o.bankName ? ' · ' + o.bankName : ''}`);
+      set('simResAmount', obsAmountText(o.amountPaise));
+      set('simResRef', o.referenceLast4 ? `…${o.referenceLast4}` : 'Not parsed');
+      const reasonEl = set('simResReason', o.rejectionReason || (o.processingStatus === 'VERIFIED' ? 'Not rejected (verified)' : '—'));
+      if (reasonEl) reasonEl.style.color = o.rejectionReason ? '#f87171' : '#22c55e';
+      set('simResReceivedAt', o.receivedAt ? new Date(o.receivedAt).toLocaleString() : '—');
+      set('simResProcessedAt', o.processedAt ? new Date(o.processedAt).toLocaleString() : '—');
 
-      const refEl = document.getElementById('simResRef');
-      if (refEl) refEl.textContent = data.reference || '-';
+      const ev = data.evidence || {};
+      set('simResRawText', ev.simulatedText != null
+        ? ev.simulatedText
+        : (ev.preserved
+          ? `Message text preserved as evidence in observation ${ev.paymentObservationId} (not shown here).`
+          : 'Message text was not stored: this alert did not settle a checkout. Outcome and masked fields only.'));
 
-      const reasonEl = document.getElementById('simResReason');
-      if (reasonEl) {
-        reasonEl.textContent = data.reason || data.failingCondition || 'None (Passed)';
-        reasonEl.style.color = (data.reason || data.failingCondition) ? '#f87171' : '#22c55e';
-      }
-
-      // Exact Raw Text
-      const rawEl = document.getElementById('simResRawText');
-      if (rawEl) rawEl.textContent = data.raw || data.syntheticObservation?.raw || '';
-
-      // Stages 1 through 6 Visualizer
-      const stagesContainer = document.getElementById('simStagesContainer');
-      if (stagesContainer) {
-        const stages = data.stages || {};
-        const stageDefs = [
-          { key: 'stage1', num: 1, name: 'Stage 1: Observation Loaded & Evidence Preserved', desc: 'Normalized and preserved verbatim raw text evidence.' },
-          { key: 'stage2', num: 2, name: 'Stage 2: Source / Sender Filtering', desc: 'Validates bank institutional shortcodes or authorized email domains.' },
-          { key: 'stage3', num: 3, name: 'Stage 3: Payment Notification Parser', desc: 'Parses currency indicators (Rs, Rs., ₹, INR), credit indicators, 12-digit UTR.' },
-          { key: 'stage4', num: 4, name: 'Stage 4: Payment Verification Engine', desc: 'Verifies active session match, timestamp window, amount equality, deduplication.' },
-          { key: 'stage5', num: 5, name: 'Stage 5: Security & Fraud Pattern Engine', desc: 'Scans for injection patterns and checks customer ban status.' },
-          { key: 'stage6', num: 6, name: 'Stage 6: Attribution & State Machine Transition', desc: 'Attributes payment, promotes next queued customer, and emits webhooks & SSE.' }
-        ];
-
-        stagesContainer.innerHTML = stageDefs.map(def => {
-          const s = stages[def.key] || { status: 'PENDING' };
-          let icon = '⚪';
-          let statusColor = '#94a3b8';
-          let bgColor = '#0f172a';
-          let borderCol = '#1e293b';
-
-          if (s.status === 'LOADED' || s.status === 'PASSED' || s.status === 'PARSED' || s.status === 'VERIFIED' || s.status === 'ATTRIBUTED') {
-            icon = '✅';
-            statusColor = '#22c55e';
-            borderCol = 'rgba(34,197,94,0.3)';
-          } else if (s.status === 'FAILED') {
-            icon = '❌';
-            statusColor = '#ef4444';
-            borderCol = 'rgba(239,68,68,0.4)';
-            bgColor = 'rgba(239,68,68,0.06)';
-          } else if (s.status === 'FLAGGED_CUSTOMER_SENDER' || s.status === 'FLAGGED_SUSPICIOUS' || s.status === 'SUSPICIOUS') {
-            icon = '⚠️';
-            statusColor = '#f59e0b';
-            borderCol = 'rgba(245,158,11,0.4)';
-          } else if (s.status === 'UNRESOLVED') {
-            icon = '❓';
-            statusColor = '#cbd5e1';
-          }
-
-          const detailText = s.details ? (typeof s.details === 'string' ? s.details : JSON.stringify(s.details)) : def.desc;
-          const reasonBadge = s.reason ? `<span class="badge" style="background:#ef4444; color:#fff; font-size:0.7rem; margin-left:0.5rem;">${escapeHtml(s.reason)}</span>` : '';
-
-          return `
-          <div style="background:${bgColor}; border:1px solid ${borderCol}; border-radius:8px; padding:0.6rem 0.85rem; display:flex; justify-content:space-between; align-items:center;">
+      const stageDefs = [
+        { key: 'stage1', name: 'Stage 1: Observation Loaded & Evidence Preserved' },
+        { key: 'stage2', name: 'Stage 2: Source / Sender Filtering' },
+        { key: 'stage3', name: 'Stage 3: Payment Notification Parser' },
+        { key: 'stage4', name: 'Stage 4: Payment Verification Engine' },
+        { key: 'stage5', name: 'Stage 5: Security & Fraud Pattern Engine' },
+        { key: 'stage6', name: 'Stage 6: Attribution & State Machine Transition' }
+      ];
+      const passed = ['LOADED', 'PASSED', 'PARSED', 'VERIFIED', 'ATTRIBUTED'];
+      const warn = ['FLAGGED_CUSTOMER_SENDER', 'FLAGGED_SUSPICIOUS', 'SUSPICIOUS'];
+      document.getElementById('simStagesContainer').innerHTML = stageDefs.map(def => {
+        const st = (o.stages || {})[def.key] || { status: 'NOT_REACHED' };
+        let icon = '⚪', color = '#64748b', border = '#1e293b', bgc = '#0f172a';
+        if (passed.includes(st.status)) { icon = '✅'; color = '#22c55e'; border = 'rgba(34,197,94,0.3)'; }
+        else if (st.status === 'FAILED') { icon = '❌'; color = '#ef4444'; border = 'rgba(239,68,68,0.4)'; bgc = 'rgba(239,68,68,0.06)'; }
+        else if (warn.includes(st.status)) { icon = '⚠️'; color = '#f59e0b'; border = 'rgba(245,158,11,0.4)'; }
+        else if (st.status === 'UNRESOLVED') { icon = '❓'; color = '#cbd5e1'; }
+        // A stage the pipeline never ran was stored as PENDING by older code paths: same meaning.
+        const notReached = st.status === 'NOT_REACHED' || st.status === 'PENDING';
+        const detail = notReached
+          ? 'Not reached: an earlier stage stopped this observation.'
+          : (st.details == null ? '' : (typeof st.details === 'string' ? st.details : JSON.stringify(st.details)));
+        const isPassed = passed.includes(st.status);
+        // A stage's own outcome (e.g. VERIFYING, SUCCESS) is shown neutral when the stage passed.
+        const reason = st.reason || (!isPassed && st.outcomeStatus ? st.outcomeStatus : null);
+        const note = isPassed && st.outcomeStatus ? st.outcomeStatus : null;
+        return `
+          <div style="background:${bgc}; border:1px solid ${border}; border-radius:8px; padding:0.6rem 0.85rem; display:flex; justify-content:space-between; align-items:center; gap:0.75rem;">
             <div>
-              <div style="display:flex; align-items:center; gap:0.5rem;">
+              <div style="display:flex; align-items:center; gap:0.5rem; flex-wrap:wrap;">
                 <span style="font-size:1.05rem;">${icon}</span>
                 <strong style="color:#ffffff; font-size:0.86rem;">${escapeHtml(def.name)}</strong>
-                ${reasonBadge}
+                ${reason ? `<span class="badge" style="background:#ef4444; color:#fff; font-size:0.7rem;">${escapeHtml(reason)}</span>` : ''}
+                ${note ? `<span class="badge" style="background:#1e293b; color:#cbd5e1; font-size:0.7rem;">${escapeHtml(note)}</span>` : ''}
               </div>
-              <div style="font-size:0.75rem; color:#94a3b8; margin-left:1.85rem; margin-top:0.15rem;">
-                ${escapeHtml(detailText)}
-              </div>
+              <div style="font-size:0.75rem; color:#94a3b8; margin-left:1.85rem; margin-top:0.15rem; word-break:break-word;">${escapeHtml(detail)}</div>
             </div>
-            <div>
-              <span style="font-size:0.75rem; font-weight:800; color:${statusColor}; font-family:monospace;">
-                ${escapeHtml(s.status || 'PENDING')}
-              </span>
-            </div>
-          </div>
-        `;
-        }).join('');
+            <span style="font-size:0.75rem; font-weight:800; color:${color}; font-family:monospace; white-space:nowrap;">${escapeHtml(notReached ? 'NOT REACHED' : st.status.replace(/_/g, ' '))}</span>
+          </div>`;
+      }).join('');
+    }
+
+    // Live refresh: one SSE event per processed observation, coalesced so a burst (an SMS and its
+    // notification copies) costs one round of requests.
+    let observationRefreshTimer = null;
+    const pendingObservationEvents = [];
+    function onObservationProcessed(payload) {
+      if (payload) pendingObservationEvents.push(payload);
+      if (observationRefreshTimer) return;
+      observationRefreshTimer = setTimeout(() => {
+        observationRefreshTimer = null;
+        refreshObservationViews(pendingObservationEvents.splice(0));
+      }, 700);
+    }
+
+    function isShown(id) {
+      const el = document.getElementById(id);
+      return Boolean(el && !el.hidden && el.offsetParent !== null);
+    }
+
+    /** Refreshes the visible observation views; `events` narrows which customer/inspector to reload. */
+    function refreshObservationViews(events = []) {
+      if (isShown('subViewDevAndroid')) fetchSmsHubMessages();
+      if (!isShown('subViewDevSimulator')) return;
+      simFetchHistory();
+      const shownSessions = new Set((document.getElementById('simSessionsList')?._sessions || []).map(s => s.id));
+      const touchesCustomer = events.length === 0 || events.some(e =>
+        (simSelectedCustomer && e.customerId === simSelectedCustomer.id) ||
+        shownSessions.has(e.sessionId) || shownSessions.has(e.targetSessionId));
+      if (simSelectedCustomer && touchesCustomer) simReloadSessions({ keepSelection: true });
+      const inspectedSession = document.getElementById('simResultInspectorCard')?._sessionId;
+      if (inspectedObservationId && (events.length === 0 || events.some(e => e.observationId === inspectedObservationId || (inspectedSession && e.sessionId === inspectedSession)))) {
+        inspectObservation(inspectedObservationId, { scroll: false });
       }
     }
 
@@ -7173,7 +7298,7 @@
           if (!tbody) return;
 
           if (!data.history || data.history.length === 0) {
-            tbody.innerHTML = '<tr><td colspan="7" style="padding:1.5rem; text-align:center; color:#64748b;">No simulations recorded yet.</td></tr>';
+            tbody.innerHTML = '<tr><td colspan="7" style="padding:1.5rem; text-align:center; color:#64748b;">No observations processed yet.</td></tr>';
             return;
           }
 
@@ -7189,10 +7314,17 @@
             const trust = item.senderTrustStatus
               ? `<br><span style="font-size:0.66rem; color:${item.senderTrustStatus === 'VERIFIED' ? '#22c55e' : '#94a3b8'};">${escapeHtml(item.senderTrustStatus)}${item.bankName ? ' · ' + escapeHtml(item.bankName) : ''}</span>` : '';
 
+            // Rows recorded before observation records existed have no stored record to open.
+            const open = item.observationId
+              ? `onclick="inspectObservation(${jsArg(item.observationId)})" title="Open in Processing Result Inspector" style="border-bottom:1px solid #1e293b; cursor:pointer;${item.observationId === inspectedObservationId ? ' background:rgba(20,184,166,0.12);' : ''}"`
+              : `style="border-bottom:1px solid #1e293b;" title="Recorded before stored results; nothing to inspect"`;
+            const via = item.entryPoint && item.entryPoint !== 'SIMULATOR'
+              ? `<br><span style="font-size:0.66rem; color:#94a3b8;">${escapeHtml(OBS_ENTRY_LABELS[item.entryPoint] || item.entryPoint)}</span>` : '';
+
             return `
-            <tr style="border-bottom:1px solid #1e293b;">
+            <tr ${open}>
               <td style="padding:0.6rem 0.75rem; color:#94a3b8; font-size:0.78rem;">${time}</td>
-              <td style="padding:0.6rem 0.75rem; color:#38bdf8; font-weight:700;">${escapeHtml(item.source)}</td>
+              <td style="padding:0.6rem 0.75rem; color:#38bdf8; font-weight:700;">${escapeHtml(item.source)}${via}</td>
               <td style="padding:0.6rem 0.75rem; color:#f8fafc; font-family:monospace; font-size:0.78rem;">${escapeHtml(item.sender || '-')}${trust}</td>
               <td style="padding:0.6rem 0.75rem; color:#e2e8f0; font-family:monospace; font-size:0.75rem;">${escapeHtml(item.sessionId ? item.sessionId.slice(0, 10) + '...' : '-')}</td>
               <td style="padding:0.6rem 0.75rem; font-weight:800; color:${resColor};">${escapeHtml(item.result)}${outcome}</td>
@@ -7681,6 +7813,11 @@
     setInterval(fetchTunnelStatus, 4000);
     setInterval(fetchWhatsAppStatus, 4000);
     setInterval(fetchSmsGatewayDevices, 3500);
+    // Fallback for a dropped admin event stream: the observation lists, only while on screen.
+    setInterval(() => {
+      if (isShown('subViewDevAndroid')) fetchSmsHubMessages();
+      if (isShown('subViewDevSimulator')) simFetchHistory();
+    }, 15000);
     setInterval(loadServices, 5000);
     setInterval(fetchFalseNarrativeStatus, 15000);
     setInterval(fetchTestModeStatus, 15000);
